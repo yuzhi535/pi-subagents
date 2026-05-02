@@ -24,6 +24,8 @@ const workDir = join(tmpRoot, "work");
 const agentsDir = join(workDir, ".pi", "agents");
 const singleSessionDir = join(tmpRoot, "single-sessions");
 const mixedSessionDir = join(tmpRoot, "mixed-sessions");
+const optOutSingleSessionDir = join(tmpRoot, "opt-out-single-sessions");
+const optOutMixedSessionDir = join(tmpRoot, "opt-out-mixed-sessions");
 const envConfigDir = process.env.PI_CODING_AGENT_DIR;
 const sourceConfigDir = envConfigDir && existsSync(join(envConfigDir, "auth.json"))
   ? envConfigDir
@@ -34,6 +36,8 @@ mkdirSync(configDir, { recursive: true });
 mkdirSync(agentsDir, { recursive: true });
 mkdirSync(singleSessionDir, { recursive: true });
 mkdirSync(mixedSessionDir, { recursive: true });
+mkdirSync(optOutSingleSessionDir, { recursive: true });
+mkdirSync(optOutMixedSessionDir, { recursive: true });
 for (const name of ["auth.json", "settings.json", "models.json", "mcp.json"]) {
   const source = join(sourceConfigDir, name);
   if (existsSync(source)) copyFileSync(source, join(configDir, name));
@@ -110,7 +114,7 @@ function findParentSession(sessionDir, marker) {
   throw new Error(`Could not find parent session for ${marker}.`);
 }
 
-function runPi(sessionDir, prompt) {
+function runPi(sessionDir, prompt, extraEnv = {}) {
   execFileSync(
     "tia",
     [
@@ -139,6 +143,8 @@ function runPi(sessionDir, prompt) {
         PI_SUBAGENT_AUTO_EXIT: "",
         PI_DENY_TOOLS: "",
         PI_ARTIFACT_PROJECT_ROOT: "",
+        PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN: "",
+        ...extraEnv,
       },
     },
   );
@@ -197,7 +203,63 @@ try {
   }
   assertNoContinuation(mixed.events, "BAD_CONTINUED_MIXED");
 
-  console.log(`live stop-after-turn ok: async and mixed batches stopped parent continuation (${LIVE_TEST_MODEL})`);
+  const optOutSingleMarker = "LIVE_STOP_OPT_OUT_SINGLE_MARKER";
+  runPi(
+    optOutSingleSessionDir,
+    [
+      optOutSingleMarker,
+      "Use exactly this sequence.",
+      'First call subagent with name "live-stop-bg", agent "live-stop-bg", title "Live opt out async check", task "Run the opt-out async check.", parentClosePolicy "terminate", and async true.',
+      'After the subagent tool result, write exactly "OPT_OUT_SINGLE_CONTINUED" and nothing else.',
+      "Do not call any other tools.",
+    ].join("\n"),
+    { PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN: "1" },
+  );
+
+  const optOutSingle = findParentSession(optOutSingleSessionDir, optOutSingleMarker);
+  const optOutSingleResults = getToolResults(optOutSingle.events, "subagent");
+  if (optOutSingleResults.length !== 1) {
+    throw new Error(`Expected one opt-out async subagent result, got ${optOutSingleResults.length}.`);
+  }
+  if (optOutSingleResults[0].details?.status !== "started" || optOutSingleResults[0].details?.async !== true) {
+    throw new Error("Opt-out single run did not include a started async subagent result.");
+  }
+  const optOutSingleTexts = getAssistantTexts(optOutSingle.events).join("\n");
+  if (!optOutSingleTexts.includes("OPT_OUT_SINGLE_CONTINUED")) {
+    throw new Error("Opt-out single run did not continue after async subagent launch.");
+  }
+
+  const optOutMixedMarker = "LIVE_STOP_OPT_OUT_MIXED_MARKER";
+  runPi(
+    optOutMixedSessionDir,
+    [
+      optOutMixedMarker,
+      "Use exactly this sequence in one assistant response.",
+      'Call subagent with name "live-stop-bg", agent "live-stop-bg", title "Live opt out mixed async check", task "Run the opt-out mixed async check.", parentClosePolicy "terminate", and async true.',
+      'Call subagent with name "live-stop-sync", agent "live-stop-sync", title "Live opt out mixed sync check", task "Run the opt-out mixed sync check.", parentClosePolicy "terminate", and async false.',
+      'After both subagent tool results, write exactly "OPT_OUT_MIXED_CONTINUED" and nothing else.',
+      "Do not call any other tools.",
+    ].join("\n"),
+    { PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN: "1" },
+  );
+
+  const optOutMixed = findParentSession(optOutMixedSessionDir, optOutMixedMarker);
+  const optOutMixedResults = getToolResults(optOutMixed.events, "subagent");
+  if (optOutMixedResults.length !== 2) {
+    throw new Error(`Expected two opt-out mixed subagent results, got ${optOutMixedResults.length}.`);
+  }
+  if (!optOutMixedResults.some((result) => result.details?.status === "started" && result.details?.async === true)) {
+    throw new Error("Opt-out mixed run did not include a started async subagent result.");
+  }
+  if (!optOutMixedResults.some((result) => result.details?.status === "completed" && result.details?.async === false)) {
+    throw new Error("Opt-out mixed run did not include a completed sync subagent result.");
+  }
+  const optOutMixedTexts = getAssistantTexts(optOutMixed.events).join("\n");
+  if (!optOutMixedTexts.includes("OPT_OUT_MIXED_CONTINUED")) {
+    throw new Error("Opt-out mixed run did not continue after async and sync subagent launch batch.");
+  }
+
+  console.log(`live stop-after-turn ok: default async/mixed stop and opt-out continuation verified (${LIVE_TEST_MODEL})`);
 } finally {
   if (!keepTmp) {
     try {

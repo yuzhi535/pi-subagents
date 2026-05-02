@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, it, before, after, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -232,6 +233,7 @@ const TRACKED_ENV_KEYS = [
   "PI_PACKAGE_DIR",
   "PI_SUBAGENT_MUX",
   "PI_SUBAGENT_PI_COMMAND",
+  "PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN",
   "PI_SUBAGENT_RENAME_TMUX_SESSION",
   "PI_SUBAGENT_RENAME_TMUX_WINDOW",
   "SHELL",
@@ -1572,6 +1574,31 @@ describe("subagents/index.ts helpers", () => {
     assert.match(tool.promptSnippet, /end the response and let async results arrive by steer/);
     assert.match(tool.promptSnippet, /subagent_wait\/subagent_join only for explicit sync gates or short non-blocking status probes/);
     assert.match(tool.promptSnippet, /Async launches request a graceful stop after the current tool batch/);
+    assert.match(tool.promptSnippet, /PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 disables only that runtime stop/);
+    assert.doesNotMatch(tool.promptSnippet, /Coordinator-only turn stop is disabled/);
+  });
+
+  it("registers opt-out delegation guidance when coordinator-only turn stop is disabled", () => {
+    process.env.PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN = "1";
+    const tools = new Map<string, any>();
+
+    subagentsExtension({
+      on() {},
+      registerCommand() {},
+      registerMessageRenderer() {},
+      sendMessage() {},
+      registerTool(definition: any) {
+        tools.set(definition.name, definition);
+        return definition;
+      },
+    } as any);
+
+    const tool = tools.get("subagent");
+    assert.ok(tool);
+    assert.match(tool.promptSnippet, /Coordinator-only turn stop is disabled by PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1/);
+    assert.match(tool.promptSnippet, /you may continue only with explicitly non-overlapping parent-owned work/);
+    assert.match(tool.promptSnippet, /Do not redo delegated work/);
+    assert.doesNotMatch(tool.promptSnippet, /Async launches request a graceful stop after the current tool batch/);
   });
 
   it("marks async detached launch results as terminating the current tool batch", async () => {
@@ -1593,6 +1620,69 @@ describe("subagents/index.ts helpers", () => {
     assert.equal(result.details.status, "started");
     assert.equal(result.details.blocking, false);
     assert.equal(result.terminate, true);
+  });
+
+  it("does not terminate async launch results when coordinator-only turn stop is disabled", async () => {
+    process.env.PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN = "1";
+    const running = {
+      id: "child-no-terminate-opt-out",
+      name: "Child",
+      task: "Do work",
+      mode: "background" as const,
+      executionState: "running" as const,
+      deliveryState: "detached" as const,
+      parentClosePolicy: "terminate" as const,
+      blocking: false,
+      async: true,
+      startTime: Date.now(),
+      sessionFile: "/tmp/child-no-terminate-opt-out.jsonl",
+    };
+
+    const result = await getLaunchedSubagentResultForTest(running as any) as any;
+    assert.equal(result.details.status, "started");
+    assert.equal(result.details.async, true);
+    assert.equal(result.terminate, undefined);
+  });
+
+  it("does not defer same-turn detached async completion when coordinator-only turn stop is disabled", async () => {
+    process.env.PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN = "1";
+    const sent: Array<{ message: any; options: any }> = [];
+    const running = {
+      id: "child-no-defer-opt-out",
+      name: "Async child",
+      task: "Start work",
+      mode: "background" as const,
+      executionState: "running" as const,
+      deliveryState: "detached" as const,
+      parentClosePolicy: "terminate" as const,
+      blocking: false,
+      async: true,
+      startTime: Date.now(),
+      sessionFile: "/tmp/child-no-defer-opt-out.jsonl",
+    };
+
+    setRunningSubagentForTest(running as any);
+    const asyncResult = await getLaunchedSubagentResultForTest(running as any) as any;
+    routeDetachedSubagentCompletionForTest(
+      {
+        sendMessage(message: any, options: any) {
+          sent.push({ message, options });
+        },
+      },
+      running as any,
+      {
+        name: running.name,
+        task: running.task,
+        summary: "Async done",
+        sessionFile: running.sessionFile,
+        exitCode: 0,
+        elapsed: 1,
+      },
+    );
+
+    assert.equal(asyncResult.terminate, undefined);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].options.deliverAs, "steer");
   });
 
   it("defers same-turn detached async completion delivery until the next user turn", async () => {
@@ -1697,6 +1787,52 @@ describe("subagents/index.ts helpers", () => {
     assert.equal(asyncResult.terminate, true);
     assert.equal(syncResult.details.status, "completed");
     assert.equal(syncResult.terminate, true);
+  });
+
+  it("does not mark mixed async and sync launch results as terminating when coordinator-only turn stop is disabled", async () => {
+    process.env.PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN = "1";
+    const asyncRunning = {
+      id: "child-mixed-async-opt-out",
+      name: "Async child",
+      task: "Start work",
+      mode: "background" as const,
+      executionState: "running" as const,
+      deliveryState: "detached" as const,
+      parentClosePolicy: "terminate" as const,
+      blocking: false,
+      async: true,
+      startTime: Date.now(),
+      sessionFile: "/tmp/child-mixed-async-opt-out.jsonl",
+    };
+    const syncRunning = {
+      id: "child-mixed-sync-opt-out",
+      name: "Sync child",
+      task: "Gate work",
+      mode: "background" as const,
+      executionState: "running" as const,
+      deliveryState: "detached" as const,
+      parentClosePolicy: "terminate" as const,
+      blocking: true,
+      async: false,
+      startTime: Date.now(),
+      sessionFile: "/tmp/child-mixed-sync-opt-out.jsonl",
+      completionPromise: Promise.resolve({
+        name: "Sync child",
+        task: "Gate work",
+        summary: "Done",
+        sessionFile: "/tmp/child-mixed-sync-opt-out.jsonl",
+        exitCode: 0,
+        elapsed: 1,
+      }),
+    };
+
+    setRunningSubagentForTest(asyncRunning as any);
+    setRunningSubagentForTest(syncRunning as any);
+    const asyncResult = await getLaunchedSubagentResultForTest(asyncRunning as any) as any;
+    const syncResult = await getLaunchedSubagentResultForTest(syncRunning as any) as any;
+    assert.equal(asyncResult.terminate, undefined);
+    assert.equal(syncResult.details.status, "completed");
+    assert.equal(syncResult.terminate, undefined);
   });
 
   it("does not mark sync launch results as terminating the current tool batch", async () => {

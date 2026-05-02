@@ -43,7 +43,6 @@ import {
 import {
 	getArtifactStorageRoot,
 	getSessionArtifactDir,
-	resolveArtifactProjectRoot,
 } from "../shared/artifacts.ts";
 import type {
 	CompletedSubagentResult,
@@ -725,8 +724,20 @@ function resetSubagentBatchStopRequest(): void {
 	stopAfterCurrentSubagentBatch = false;
 }
 
+function isCoordinatorOnlyTurnDisabled(): boolean {
+	return process.env.PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN === "1";
+}
+
 function requestSubagentBatchStop(): void {
+	if (isCoordinatorOnlyTurnDisabled()) return;
 	stopAfterCurrentSubagentBatch = true;
+}
+
+function getCoordinatorOnlyTurnPrompt(): string {
+	if (isCoordinatorOnlyTurnDisabled()) {
+		return "Coordinator-only turn stop is disabled by PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1; after async launches you may continue only with explicitly non-overlapping parent-owned work. Do not redo delegated work.";
+	}
+	return "Async launches request a graceful stop after the current tool batch so results can arrive by steer instead of provoking another autonomous parent continuation. PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 disables only that runtime stop; the ownership contract still applies.";
 }
 
 function getSubagentBatchStopMetadata(): { terminate?: true } {
@@ -2493,7 +2504,6 @@ function getPreparedRoleBlock(prepared: PreparedSubagentLaunch): string {
 
 function getBaseSubagentEnvVars(
 	prepared: PreparedSubagentLaunch,
-	ctx: SubagentLaunchContext,
 	params: SubagentParamsInput,
 ): Record<string, string> {
 	const envVars: Record<string, string> = {};
@@ -2586,7 +2596,7 @@ async function launchBackgroundSubagent(
 		args.push(promptArg);
 	}
 
-	const envVars = getBaseSubagentEnvVars(prepared, ctx, params);
+	const envVars = getBaseSubagentEnvVars(prepared, params);
 	if (prepared.agentDefs?.autoExit) envVars.PI_SUBAGENT_AUTO_EXIT = "1";
 	envVars.PI_SUBAGENT_SESSION = prepared.subagentSessionFile;
 
@@ -2851,7 +2861,7 @@ async function launchSubagent(
 	}
 
 	// Env vars (shell-escaped for inline prefix)
-	const envVars = getBaseSubagentEnvVars(prepared, ctx, params);
+	const envVars = getBaseSubagentEnvVars(prepared, params);
 	if (prepared.agentDefs?.autoExit) envVars.PI_SUBAGENT_AUTO_EXIT = "1";
 	envVars.PI_SUBAGENT_SESSION = prepared.subagentSessionFile;
 	envVars.PI_SUBAGENT_SURFACE = surface;
@@ -3313,7 +3323,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				"Interactive agents run in panes; background agents run headlessly; named-agent frontmatter is authoritative for runtime settings, and call-time duplicates for named agents are ignored instead of overriding it. " +
 				"Before calling subagent, translate the user's request into the child task; do not change the work based on the agent name. Use the catalog/list memory label only to decide context: isolated context starts a fresh chat, so write a self-contained task with objective, relevant facts/files, constraints, and expected output; forked context continues this conversation on a new branch, so give goal, boundary, and expected output without re-explaining everything. " +
 				"Handle trivial single-file reads, quick direct answers, and tiny one-shot edits yourself instead of delegating. " +
-				"Delegation ownership rule: after launching subagents, the parent may continue only with explicitly non-overlapping parent-owned work. Do not redo delegated work. If no safe independent work is clear, end the response and let async results arrive by steer. Ask the user only when there is a plausible next step but ownership is ambiguous. Use subagent_wait/subagent_join only for explicit sync gates or short non-blocking status probes. Async launches request a graceful stop after the current tool batch so results can arrive by steer instead of provoking another autonomous parent continuation.",
+				"Delegation ownership rule: after launching subagents, the parent may continue only with explicitly non-overlapping parent-owned work. Do not redo delegated work. If no safe independent work is clear, end the response and let async results arrive by steer. Ask the user only when there is a plausible next step but ownership is ambiguous. Use subagent_wait/subagent_join only for explicit sync gates or short non-blocking status probes. " +
+				getCoordinatorOnlyTurnPrompt(),
 			parameters: SubagentParams,
 
 			execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
@@ -3616,7 +3627,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			parameters: SubagentDetachParams,
 
 			async execute(_toolCallId, params) {
-				return asSubagentToolResult(await detachSubagentResult(params, pi));
+				return asSubagentToolResult(detachSubagentResult(params, pi));
 			},
 
 			renderCall(args, theme) {
@@ -3869,7 +3880,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				return new Text(theme.fg("dim", text), 0, 0);
 			},
 
-			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 				const name = params.name ?? "Resume";
 				const sessionFile = params.sessionFile;
 				const task = params.task;

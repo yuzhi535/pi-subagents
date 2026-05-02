@@ -208,6 +208,8 @@ After an async launch, the parent should only continue with clearly non-overlapp
 
 Successful async launches request graceful tool-batch termination, so Pi returns to the user or waits for steer delivery instead of making another autonomous parent LLM call immediately after the launch.
 
+`PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1` disables only that runtime stop request. This is an advanced escape hatch for users who intentionally want the parent agent free to continue after spawning async children. The ownership rule still applies: the parent should only continue with clearly non-overlapping work, and child results may arrive as steer messages while the parent keeps working.
+
 ## Why the runtime has so many settings
 
 Because there is no single sane policy for all agents.
@@ -278,6 +280,7 @@ These are the ones worth knowing.
 - `PI_SUBAGENT_MUX` — force the mux backend: `cmux`, `tmux`, `zellij`, or `wezterm`
 - `PI_CODING_AGENT_DIR` — override the global pi agent config root
 - `PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS` — disable the hidden top-level subagent catalog
+- `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` — opt out of the default graceful parent turn stop after async launches; set to `1` only when you want the parent free to continue after spawning children
 - `PI_SUBAGENT_DISABLE_SESSION_TITLES` — disable automatic child session titles such as `[scout agent] Auth flow reconnaissance`
 - `PI_ARTIFACT_PROJECT_ROOT` — override the artifact history root; layout stays `<root>/<project>/artifacts/<session-id>/...`
 - `PI_SUBAGENT_SHELL_READY_DELAY_MS` — override the interactive shell startup delay before sending a child command (default `500`)
