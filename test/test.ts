@@ -86,6 +86,8 @@ import {
   resolveSubagentNoSessionForTest,
   getPreparedSessionLaunchArgsForTest,
   getNoSessionSeedModeForTest,
+  buildResumePiArgsForTest,
+  resolveResumeLaunchMetadataForTest,
   renderSubagentWidgetForTest,
   resetSubagentStateForTest,
   resolveSubagentBlockingForTest,
@@ -1227,6 +1229,76 @@ describe("subagents/index.ts helpers", () => {
     assert.equal(getNoSessionSeedModeForTest("standalone"), null);
     assert.equal(getNoSessionSeedModeForTest("fork"), "fork");
     assert.equal(getNoSessionSeedModeForTest("lineage-only"), "fork");
+  });
+
+  it("resumes without putting task text in CLI argv", () => {
+    const weirdTask = "--help @not-a-file ' \" ` ; | && $(echo bad) $HOME\nこんにちは 🚀";
+    assert.deepEqual(buildResumePiArgsForTest("child.jsonl", "background"), [
+      "-p",
+      "--session",
+      "child.jsonl",
+    ]);
+    assert.deepEqual(buildResumePiArgsForTest("child.jsonl", "interactive"), [
+      "--session",
+      "child.jsonl",
+    ]);
+    assert.equal(buildResumePiArgsForTest("child.jsonl", "background").includes(weirdTask), false);
+    assert.equal(buildResumePiArgsForTest("child.jsonl", "interactive").includes(weirdTask), false);
+  });
+
+  it("infers resume mode from parent launch metadata", () => {
+    const dir = createTestDir();
+    const parent = join(dir, "parent.jsonl");
+    const child = join(dir, "child.jsonl");
+    writeFileSync(
+      parent,
+      [
+        JSON.stringify({ type: "session", timestamp: new Date().toISOString(), cwd: dir }),
+        JSON.stringify({
+          type: "custom_message",
+          customType: "subagent_started",
+          details: {
+            id: "child-1",
+            name: "Worker",
+            agent: "bg-mode",
+            mode: "background",
+            sessionFile: child,
+            parentClosePolicy: "abandon",
+            autoExit: true,
+          },
+        }),
+      ].join("\n") + "\n",
+    );
+    writeFileSync(
+      child,
+      JSON.stringify({ type: "session", timestamp: new Date().toISOString(), cwd: dir, parentSession: parent }) + "\n",
+    );
+
+    assert.deepEqual(resolveResumeLaunchMetadataForTest(child), {
+      mode: "background",
+      modeSource: "metadata",
+      agent: "bg-mode",
+      name: "Worker",
+      autoExit: true,
+      parentClosePolicy: "abandon",
+      blocking: undefined,
+      async: undefined,
+    });
+    assert.deepEqual(resolveResumeLaunchMetadataForTest(child, "interactive"), {
+      mode: "interactive",
+      modeSource: "explicit",
+    });
+  });
+
+  it("falls back to interactive resume mode when metadata is unavailable", () => {
+    const dir = createTestDir();
+    const child = createSessionFile(dir, [
+      { type: "session", timestamp: new Date().toISOString(), cwd: dir },
+    ]);
+    assert.deepEqual(resolveResumeLaunchMetadataForTest(child), {
+      mode: "interactive",
+      modeSource: "fallback",
+    });
   });
 
   it("reads extensions from extensions frontmatter", () => {

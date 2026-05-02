@@ -1675,6 +1675,37 @@ function handleDetachedSubagentOutcome(
 	routeDetachedSubagentCompletion(pi, running, result);
 }
 
+function wireSubagentSteerBack(
+	pi: ExtensionAPI,
+	running: RunningSubagent,
+	watchPromise: Promise<SubagentResult>,
+): void {
+	watchPromise
+		.then((result) => {
+			handleDetachedSubagentOutcome(pi, running, result);
+		})
+		.catch((err) => {
+			runningSubagents.delete(running.id);
+			updateWidget();
+			pi.sendMessage(
+				{
+					customType: "subagent_result",
+					content: `Sub-agent "${running.name}" error: ${err?.message ?? String(err)}`,
+					display: true,
+					details: {
+						id: running.id,
+						name: running.name,
+						task: running.task,
+						deliveryState: running.deliveryState,
+						parentClosePolicy: running.parentClosePolicy,
+						error: err?.message,
+					},
+				},
+				{ triggerTurn: true, deliverAs: "steer" },
+			);
+		});
+}
+
 function getSubagentWaitPingResult(
 	running: RunningSubagent,
 	result: SubagentResult,
@@ -2495,6 +2526,111 @@ function getPreparedSessionLaunchArgs(prepared: PreparedSubagentLaunch): string[
 
 export function getPreparedSessionLaunchArgsForTest(agentDefs: AgentDefaults | null) {
 	return getPreparedSessionLaunchArgs({ agentDefs, subagentSessionFile: "child.jsonl" } as PreparedSubagentLaunch);
+}
+
+type ResumeMode = "interactive" | "background";
+type ResumeModeSource = "explicit" | "metadata" | "fallback";
+
+interface ResumeLaunchMetadata {
+	mode: ResumeMode;
+	modeSource: ResumeModeSource;
+	agent?: string;
+	name?: string;
+	autoExit?: boolean;
+	parentClosePolicy?: ParentClosePolicy;
+	blocking?: boolean;
+	async?: boolean;
+}
+
+function isResumeMode(value: unknown): value is ResumeMode {
+	return value === "interactive" || value === "background";
+}
+
+function normalizeSessionFilePath(file: string): string {
+	try {
+		return resolve(file);
+	} catch {
+		return file;
+	}
+}
+
+function sameSessionFile(left: unknown, right: string): boolean {
+	return typeof left === "string" && normalizeSessionFilePath(left) === normalizeSessionFilePath(right);
+}
+
+function findLaunchMetadataInValue(value: unknown, sessionFile: string): Omit<ResumeLaunchMetadata, "modeSource"> | null {
+	if (!value || typeof value !== "object") return null;
+	const stack: unknown[] = [value];
+	const seen = new Set<object>();
+	while (stack.length > 0) {
+		const current = stack.pop();
+		if (!current || typeof current !== "object") continue;
+		if (seen.has(current)) continue;
+		seen.add(current);
+		const record = current as Record<string, unknown>;
+		if (sameSessionFile(record.sessionFile, sessionFile) && isResumeMode(record.mode)) {
+			return {
+				mode: record.mode,
+				agent: typeof record.agent === "string" ? record.agent : undefined,
+				name: typeof record.name === "string" ? record.name : undefined,
+				autoExit: typeof record.autoExit === "boolean" ? record.autoExit : undefined,
+				parentClosePolicy:
+					record.parentClosePolicy === "terminate" || record.parentClosePolicy === "cancel" || record.parentClosePolicy === "abandon"
+						? record.parentClosePolicy
+						: undefined,
+				blocking: typeof record.blocking === "boolean" ? record.blocking : undefined,
+				async: typeof record.async === "boolean" ? record.async : undefined,
+			};
+		}
+		for (const child of Object.values(record)) {
+			if (child && typeof child === "object") stack.push(child);
+		}
+	}
+	return null;
+}
+
+function getParentSessionFileFromChildSession(sessionFile: string): string | null {
+	try {
+		for (const entry of getEntries(sessionFile)) {
+			const parentSession = (entry as Record<string, unknown>).parentSession;
+			if (typeof parentSession === "string" && parentSession) return parentSession;
+		}
+	} catch {}
+	return null;
+}
+
+function resolveResumeLaunchMetadata(sessionFile: string, explicitMode?: ResumeMode): ResumeLaunchMetadata {
+	if (explicitMode) return { mode: explicitMode, modeSource: "explicit" };
+	try {
+		for (const entry of getEntries(sessionFile)) {
+			const direct = findLaunchMetadataInValue(entry, sessionFile);
+			if (direct) return { ...direct, modeSource: "metadata" };
+		}
+	} catch {}
+
+	const parentSession = getParentSessionFileFromChildSession(sessionFile);
+	if (parentSession && existsSync(parentSession)) {
+		try {
+			for (const entry of getEntries(parentSession)) {
+				const parentMetadata = findLaunchMetadataInValue(entry, sessionFile);
+				if (parentMetadata) return { ...parentMetadata, modeSource: "metadata" };
+			}
+		} catch {}
+	}
+
+	return { mode: "interactive", modeSource: "fallback" };
+}
+
+function buildResumePiArgs(sessionFile: string, mode: ResumeMode = "background"): string[] {
+	return mode === "background" ? ["-p", "--session", sessionFile] : ["--session", sessionFile];
+}
+
+export function resolveResumeLaunchMetadataForTest(sessionFile: string, explicitMode?: ResumeMode) {
+	return resolveResumeLaunchMetadata(sessionFile, explicitMode);
+}
+
+export function buildResumePiArgsForTest(sessionFile: string, mode: ResumeMode = "background") {
+	return buildResumePiArgs(sessionFile, mode);
 }
 
 function getNoSessionSeedMode(sessionMode: SubagentSessionMode): Exclude<SubagentSessionMode, "standalone"> | null {
@@ -3397,36 +3533,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					effectiveParams.background ??
 					(agentDefs?.mode === "background" ? true : false);
 
-				// Helper: wire up the steer-back message after a subagent completes
-				const wireSteerBack = (
-					running: RunningSubagent,
-					watchPromise: Promise<SubagentResult>,
-				) => {
-					watchPromise
-						.then((result) => {
-							handleDetachedSubagentOutcome(pi, running, result);
-						})
-						.catch((err) => {
-							runningSubagents.delete(running.id);
-							updateWidget();
-							pi.sendMessage(
-								{
-									customType: "subagent_result",
-									content: `Sub-agent "${running.name}" error: ${err?.message ?? String(err)}`,
-									display: true,
-									details: {
-										id: running.id,
-										name: running.name,
-										task: running.task,
-										deliveryState: running.deliveryState,
-										parentClosePolicy: running.parentClosePolicy,
-										error: err?.message,
-									},
-								},
-								{ triggerTurn: true, deliverAs: "steer" },
-							);
-						});
-				};
 
 				let running: RunningSubagent;
 
@@ -3441,7 +3547,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						agentDefs?.timeout,
 					);
 					startWidgetRefresh();
-					wireSteerBack(running, running.completionPromise);
+					wireSubagentSteerBack(pi, running, running.completionPromise);
 				} else {
 					// Interactive mode — requires a terminal multiplexer
 					if (!isMuxAvailable()) {
@@ -3455,7 +3561,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						AbortSignal.any([watcherAbort.signal, getModuleAbortSignal()]),
 					);
 					startWidgetRefresh();
-					wireSteerBack(running, running.completionPromise);
+					wireSubagentSteerBack(pi, running, running.completionPromise);
 				}
 
 				return getLaunchedSubagentResult(running, signal);
@@ -3873,6 +3979,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 							"Optional follow-up task to send after resuming",
 					}),
 				),
+				mode: Type.Optional(
+					Type.Union([Type.Literal("background"), Type.Literal("interactive")], {
+						description:
+							"Explicit resume mode when launch metadata cannot be inferred. Defaults to the original mode when known, otherwise interactive fallback.",
+					}),
+				),
 			}),
 
 			renderCall(args, theme) {
@@ -3905,7 +4017,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				return new Text(theme.fg("dim", text), 0, 0);
 			},
 
-			async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			async execute(_toolCallId, params) {
 				const name = params.name ?? "Resume";
 				const sessionFile = params.sessionFile;
 				const task = params.task;
@@ -3919,9 +4031,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						details: { error: "session file required" },
 					};
 				}
-				if (!isMuxAvailable()) {
-					return muxUnavailableResult("subagents");
-				}
 				if (!existsSync(sessionFile)) {
 					return {
 						content: [
@@ -3934,94 +4043,99 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 					};
 				}
 
-				const entryCountBefore = getEntryCount(sessionFile);
-				const surface = createSurface(name);
-				await new Promise<void>((resolve) => setTimeout(resolve, getShellReadyDelayMs()));
+				const explicitMode = isResumeMode(params.mode) ? params.mode : undefined;
+				const metadata = resolveResumeLaunchMetadata(sessionFile, explicitMode);
+				if (metadata.mode === "interactive" && !isMuxAvailable()) {
+					return muxUnavailableResult("subagents");
+				}
 
-				const parts = getPiShellParts(["--session", sessionFile]);
+				const entryCountBefore = getEntryCount(sessionFile);
 				const subagentDonePath = join(
 					dirname(new URL(import.meta.url).pathname),
 					"subagent-done.ts",
 				);
-				for (const arg of getExtensionLaunchArgs(parseSubagentExtensionList(process.env.PI_SUBAGENT_EXTENSIONS), subagentDonePath)) {
-					parts.push(shellEscape(arg));
-				}
-
-				let cleanupMsgFile: string | undefined;
-				if (task) {
-					const msgFile = join(tmpdir(), `subagent-resume-${Date.now()}.md`);
-					writeFileSync(msgFile, task, "utf8");
-					cleanupMsgFile = msgFile;
-					parts.push(`@${msgFile}`);
-				}
-
-				const resumeEnvParts: string[] = [];
-				if (process.env.PI_CODING_AGENT_DIR) {
-					resumeEnvParts.push(`PI_CODING_AGENT_DIR=${shellEscape(process.env.PI_CODING_AGENT_DIR)}`);
-				}
-				if (process.env.PI_DENY_TOOLS) {
-					resumeEnvParts.push(`PI_DENY_TOOLS=${shellEscape(process.env.PI_DENY_TOOLS)}`);
-				}
-				if (process.env.PI_SUBAGENT_EXTENSIONS) {
-					resumeEnvParts.push(`PI_SUBAGENT_EXTENSIONS=${shellEscape(process.env.PI_SUBAGENT_EXTENSIONS)}`);
-				}
-				resumeEnvParts.push(`PI_SUBAGENT_NAME=${shellEscape(name)}`);
-				resumeEnvParts.push(`PI_SUBAGENT_SESSION=${shellEscape(sessionFile)}`);
-				resumeEnvParts.push("PI_SUBAGENT_AUTO_EXIT=1");
-				resumeEnvParts.push(
-					`PI_ARTIFACT_PROJECT_ROOT=${shellEscape(getArtifactStorageRoot())}`,
+				const extensionArgs = getExtensionLaunchArgs(
+					parseSubagentExtensionList(process.env.PI_SUBAGENT_EXTENSIONS),
+					subagentDonePath,
 				);
-				const resumeEnvPrefix = `${resumeEnvParts.join(" ")} `;
-				const command = `${resumeEnvPrefix}${parts.join(" ")}${cleanupMsgFile ? `; rm -f ${shellEscape(cleanupMsgFile)}` : ""}; echo '__SUBAGENT_DONE_'${exitStatusVar()}'__'`;
-				sendShellCommand(surface, command);
+				const resumeEnvVars: Record<string, string> = {};
+				if (process.env.PI_CODING_AGENT_DIR) resumeEnvVars.PI_CODING_AGENT_DIR = process.env.PI_CODING_AGENT_DIR;
+				if (process.env.PI_DENY_TOOLS) resumeEnvVars.PI_DENY_TOOLS = process.env.PI_DENY_TOOLS;
+				if (process.env.PI_SUBAGENT_EXTENSIONS) resumeEnvVars.PI_SUBAGENT_EXTENSIONS = process.env.PI_SUBAGENT_EXTENSIONS;
+				resumeEnvVars.PI_SUBAGENT_NAME = name;
+				if (metadata.agent) resumeEnvVars.PI_SUBAGENT_AGENT = metadata.agent;
+				resumeEnvVars.PI_SUBAGENT_SESSION = sessionFile;
+				if (metadata.autoExit ?? true) resumeEnvVars.PI_SUBAGENT_AUTO_EXIT = "1";
+				resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
 
 				const id = Math.random().toString(16).slice(2, 10);
 				const running: RunningSubagent = {
 					id,
 					name,
 					task: task ?? "resumed session",
-					mode: "interactive",
+					agent: metadata.agent,
+					mode: metadata.mode,
 					executionState: "running",
 					deliveryState: "detached",
-					parentClosePolicy: "terminate",
+					parentClosePolicy: metadata.parentClosePolicy ?? "terminate",
 					blocking: false,
 					async: true,
-					surface,
+					autoExit: metadata.autoExit ?? true,
 					startTime,
 					sessionFile,
+					launchEntryCount: entryCountBefore,
 				};
+
+				if (metadata.mode === "background") {
+					const invocation = getPiInvocation([...buildResumePiArgs(sessionFile, "background"), ...extensionArgs]);
+					const child = spawn(invocation.command, invocation.args, {
+						detached: true,
+						stdio: ["pipe", "pipe", "pipe"],
+						env: getSubagentChildProcessEnv(invocation, resumeEnvVars),
+					});
+					if (task) child.stdin?.end(task);
+					else child.stdin?.end();
+					child.unref();
+					running.childProcess = child;
+					const rememberTail = (current: string | undefined, chunk: Buffer | string) =>
+						`${current ?? ""}${chunk.toString()}`.slice(-4000);
+					child.stdout?.on("data", (chunk) => {
+						running.stdoutTail = rememberTail(running.stdoutTail, chunk);
+					});
+					child.stderr?.on("data", (chunk) => {
+						running.stderrTail = rememberTail(running.stderrTail, chunk);
+					});
+				} else {
+					const surface = createSurface(name);
+					await new Promise<void>((resolve) => setTimeout(resolve, getShellReadyDelayMs()));
+					const doneSentinelFile = getDoneSentinelFile(sessionFile, id);
+					const parts = getPiShellParts(buildResumePiArgs(sessionFile, "interactive"));
+					for (const arg of extensionArgs) parts.push(shellEscape(arg));
+					resumeEnvVars.PI_SUBAGENT_SURFACE = surface;
+					const resumeEnvPrefix = Object.entries(resumeEnvVars)
+						.map(([key, value]) => `${key}=${shellEscape(value)}`)
+						.join(" ") + " ";
+					const command = `${resumeEnvPrefix}${parts.join(" ")}; printf '__SUBAGENT_DONE_'${exitStatusVar()}'__\\n' | tee ${shellEscape(doneSentinelFile)}`;
+					sendShellCommand(surface, command);
+					if (task) {
+						await new Promise<void>((resolve) => setTimeout(resolve, Math.max(3000, getShellReadyDelayMs())));
+						sendCommand(surface, "");
+						await new Promise<void>((resolve) => setTimeout(resolve, 500));
+						sendCommand(surface, task);
+					}
+					running.surface = surface;
+					running.doneSentinelFile = doneSentinelFile;
+				}
+
 				runningSubagents.set(id, running);
 				startWidgetRefresh();
 
 				const watcherAbort = new AbortController();
 				running.abortController = watcherAbort;
-
-				watchSubagent(running, AbortSignal.any([watcherAbort.signal, getModuleAbortSignal()]))
-					.then((result) => {
-						const allEntries = getNewEntries(sessionFile, entryCountBefore);
-						const summary =
-							findLastAssistantMessage(allEntries) ??
-							(result.exitCode !== 0
-								? `Resumed session exited with code ${result.exitCode}`
-								: "Resumed session exited without new output");
-						handleDetachedSubagentOutcome(pi, running, {
-							...result,
-							summary,
-							sessionFile,
-						});
-					})
-					.catch((err) => {
-						updateWidget();
-						pi.sendMessage(
-							{
-								customType: "subagent_result",
-								content: `Resume error: ${err?.message ?? String(err)}`,
-								display: true,
-								details: { name, error: err?.message },
-							},
-							{ triggerTurn: true, deliverAs: "steer" },
-						);
-					});
+				running.completionPromise = metadata.mode === "background"
+					? watchBackgroundSubagent(running, AbortSignal.any([watcherAbort.signal, getModuleAbortSignal()]))
+					: watchSubagent(running, AbortSignal.any([watcherAbort.signal, getModuleAbortSignal()]));
+				wireSubagentSteerBack(pi, running, running.completionPromise);
 
 				return {
 					content: [{ type: "text", text: `Session "${name}" resumed.` }],
@@ -4030,8 +4144,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 						name,
 						sessionFile,
 						status: "started",
+						mode: metadata.mode,
+						modeSource: metadata.modeSource,
+						agent: metadata.agent,
 						deliveryState: "detached",
-						parentClosePolicy: "terminate",
+						parentClosePolicy: running.parentClosePolicy,
 						blocking: false,
 						async: true,
 					},
