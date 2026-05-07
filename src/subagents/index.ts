@@ -27,12 +27,14 @@ import {
 	sendShellCommand,
 	interruptSurface,
 	pollForExit,
+	readScreenAsync,
 	consumeSubagentExitSignal,
 	closeSurface,
 	shellEscape,
 	exitStatusVar,
 	renameCurrentTab,
 	renameWorkspace,
+	getMuxBackend,
 } from "./mux.ts";
 import {
 	getEntries,
@@ -464,6 +466,22 @@ export function getShellReadyDelayMs(): number {
 	const raw = process.env.PI_SUBAGENT_SHELL_READY_DELAY_MS?.trim();
 	const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 500;
+}
+
+async function waitForInteractivePrompt(surface: string): Promise<void> {
+	const start = Date.now();
+	const timeoutMs = Number.parseInt(
+		process.env.PI_SUBAGENT_PROMPT_READY_TIMEOUT_MS ?? "30000",
+		10,
+	);
+	const deadline = start + (Number.isFinite(timeoutMs) ? timeoutMs : 30000);
+	while (Date.now() < deadline) {
+		try {
+			const screen = await readScreenAsync(surface, 30);
+			if (/^\s*>\s*$/m.test(screen) || screen.includes("No open tasks")) return;
+		} catch {}
+		await new Promise<void>((resolve) => setTimeout(resolve, 500));
+	}
 }
 
 function isSetTabTitleToolEnabled(): boolean {
@@ -3046,7 +3064,11 @@ async function launchSubagent(
 	const command = `${piCommand}; printf '__SUBAGENT_DONE_'${exitStatusVar()}'__\\n' | tee ${shellEscape(doneSentinelFile)}`;
 	sendShellCommand(surface, command);
 	if (injectTaskAfterStart) {
-		await new Promise<void>((resolve) => setTimeout(resolve, Math.max(3000, getShellReadyDelayMs())));
+		if (getMuxBackend() === "cmux") {
+			await waitForInteractivePrompt(surface);
+		} else {
+			await new Promise<void>((resolve) => setTimeout(resolve, Math.max(3000, getShellReadyDelayMs())));
+		}
 		// Dismiss pi's startup/welcome overlay before injecting the task. If the
 		// overlay is active, the first Enter clears it; without this, the task text
 		// can land in the editor but never submit, leaving the foreground child

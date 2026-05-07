@@ -3990,8 +3990,8 @@ esac
       closeSurface(secondSurface);
 
       const log = readFileSync(logFile, "utf8");
-      assert.match(log, /new-split/);
-      assert.match(log, /new-surface/);
+      assert.match(log, /new-split right --focus true/);
+      assert.doesNotMatch(log, /new-surface/);
       assert.match(log, /rename-tab/);
       assert.match(log, /workspace-action/);
       assert.match(log, /send/);
