@@ -1,14 +1,12 @@
 # pi-subagents
 
-`pi-subagents` gives [pi](https://github.com/badlogic/pi-mono) a real subagent runtime.
+`pi-subagents` gives [pi](https://github.com/badlogic/pi-mono) named child agents.
 
-Pi is a minimal coding harness. It gives you extensions, skills, prompts, and packages, then stays out of your way. Subagents are not built into core on purpose. They belong in a package where the behavior is explicit and replaceable.
+Pi keeps the core small. It gives you extensions, skills, prompts, packages, sessions, and tools. It leaves subagents to packages because people want different runtimes.
 
-This package is that layer.
+This package is one runtime. It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), then grew into a fuller model: named agents, interactive panes, background workers, async results, sync gates, resume, forked context, and a widget that shows what is running.
 
-It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents). HazAT built the original async subagent extension and deserves full credit for the foundation. This fork, `edxeth/pi-subagents`, keeps the original idea, then pushes it much closer to Claude Code CLI territory: explicit sync/async launches, background workers, wait/join/detach ownership, stricter runtime control, and better separation between interactive and autonomous agents.
-
-If you want the short version: this package gives pi a more complete subagent model, with explicit control over how child agents are launched, observed, synchronized, and resumed.
+Use it when one agent should hand work to another agent instead of trying to do everything in one transcript.
 
 https://github.com/user-attachments/assets/e0b97493-6c9b-4710-ba26-a6c08230ba28
 
@@ -18,105 +16,160 @@ https://github.com/user-attachments/assets/e0b97493-6c9b-4710-ba26-a6c08230ba28
 pi install git:github.com/edxeth/pi-subagents
 ```
 
-## What it gives pi
+## What it adds
 
-- named subagents instead of ad-hoc prompt blobs
-- async execution by default, with graceful parent turn stops after async launches
-- sync execution when the parent truly needs to wait
-- interactive foreground children and headless background children
-- explicit `wait`, `join`, and `detach` semantics
-- resumable child sessions through `caller_ping` and `subagent_resume`
-- child outputs delivered to the parent via final assistant message (plus built-in `write`/`read` for large payloads)
-- frontmatter that controls runtime, not just personality
-- a live widget so you can see what your children are doing
-
-That is the difference between “subagents exist” and “subagents are usable.”
-
-## Launching children through a wrapper
-
-By default, child sessions are launched with the normal `pi` command or, when possible, the same bundled executable as the parent process. If your pi runtime is wrapped by another launcher, opt in explicitly with:
-
-```bash
-PI_SUBAGENT_PI_COMMAND="tia pi" tia pi
-```
-
-This makes both interactive subagents and resumed sessions launch through `tia pi` without changing behavior for users who run stock `pi`. The value is parsed as command words, so quoted paths are supported:
-
-```bash
-PI_SUBAGENT_PI_COMMAND="'/path with spaces/tia' pi" pi
-```
-
-## Why it exists
-
-A scout, a reviewer, and an implementation worker are not the same thing.
-
-Sometimes you want a child in a pane so you can watch it think. Sometimes you want it headless. Sometimes the parent should keep moving. Sometimes the parent must stop and wait. Sometimes the child should die with the parent. Sometimes it should survive.
-
-Most tools flatten all of that into vague marketing words. This package does not. It exposes the actual runtime model.
-
-That is why it has more than one mode. Not because complexity is fashionable. Because the problem is real.
+- named agents from `.pi/agents/` or `~/.pi/agent/agents/`
+- interactive children in panes
+- background children through `pi -p`
+- async launches with result delivery by steer
+- sync launches when the parent must wait
+- `subagent_wait`, `subagent_join`, and `subagent_detach`
+- `caller_ping` and `subagent_resume` for child-to-parent feedback loops
+- session modes for clean, related, and forked child sessions
+- frontmatter that controls runtime behavior
+- child output through the final assistant message
+- a live widget for running children
 
 ## The model
 
-Every subagent is a named agent definition.
+A subagent is a named agent file plus a launch policy.
 
-By default, children launch **async**: the parent does not wait, and results arrive later. Use **sync** when the parent must wait before continuing.
+The agent file says who the child is and how it should run. The parent still owns the decision to launch it. The child owns the task it receives.
 
-Other runtime choices are separate: interactive pane vs background process, auto-exit vs manual close, session seeding, and parent-shutdown behavior.
+Two axes matter:
+
+- `interactive` or `background`: where the child runs
+- async or sync: whether the parent waits
+
+`interactive` means foreground. Pi opens a pane through cmux, tmux, zellij, or WezTerm.
+
+`background` means headless. Pi starts a `pi -p` child process without opening a pane.
+
+Async means the parent gets a “started” result and the child answer comes back later. Sync means the parent waits for the child answer before it continues.
 
 ## Agent definitions
 
-Agents live in either of these places:
+Agents live here:
 
 - `.pi/agents/` in the project
-- `~/.pi/agent/agents/` globally
+- `~/.pi/agent/agents/` globally, or `$PI_CODING_AGENT_DIR/agents/` when that env var is set
 
-Project-local agents override global ones with the same name.
+Project agents override global agents with the same name.
 
-This package leans heavily on frontmatter. Agent files are not just prompt wrappers. They are runtime declarations.
+A minimal agent:
+
+```md
+---
+name: scout
+description: Inspect the codebase and report the relevant files.
+mode: background
+auto-exit: true
+tools: read,grep,find,ls
+---
+
+You are a codebase scout. Find the relevant files, read enough to be useful, and return a concise map of what matters.
+```
+
+The `description` matters. Pi uses it for ambient awareness, explained next.
+
+For a fuller example of the intended style, see the [scout agent gist by edxeth](https://gist.github.com/edxeth/11b6a6cdf7c6068771a5e3f96ab5e34b). It shows the shape this package works best with: a sharp role, an explicit contract, and little room for interpretation.
 
 ### Frontmatter reference
 
-| Field | Default | What it does | When to use it |
-| --- | --- | --- | --- |
-| `name` | filename | Agent name used by `agent: "..."` | Always set it explicitly if you care about stable naming |
-| `description` | unset | Human-readable description; also used for ambient routing | Write one short, sharp line if you want the parent to discover and route to it well |
-| `enabled` | `true` | Hides the agent from discovery and blocks launch when `false` | Disable agents without deleting them |
-| `model` | pi default | Sets the model for that agent | Pin a model when the role needs a specific speed/quality tradeoff |
-| `thinking` | model default | Sets pi thinking level | Raise it for scouts/reviewers, lower it for cheap utility agents |
-| `cwd` | parent cwd | Default working directory for the child | Use for role directories, monorepo packages, or project-specific specialists |
-| `extensions` | unset | Comma-separated extension allowlist for child launch; if unset, child loads all extensions | Use to keep child agents off extensions |
-| `tools` | `all` | Built-in pi tools only: `all`, `none`, or a comma-separated subset of `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` | Omit or set `all` for normal built-ins, set `none` to disable built-ins while keeping extension/protocol tools, or list only what the agent needs |
-| `deny-tools` | unset | Denies specific child-session tools by name | Use for surgical restrictions without rewriting the whole tool set |
-| `skills` | unset | Auto-loads one or more named skills from a comma-separated list | Use when an agent always needs the same external guidance |
-| `no-context-files` | `false` | Disables automatic `AGENTS.md` / `CLAUDE.md` discovery for spawned child sessions | Use only when you want a clean child run without project context injection |
-| `no-session` | `false` | Launches the child with `pi --no-session` so no persistent child JSONL session is stored; inherited context uses a temporary session file that is removed after completion | Use for disposable children that do not need resume, caller ping, or persistent lineage bookkeeping |
-| `auto-exit` | `false` | Child exits automatically after a normal completion | Best for autonomous agents, especially background scouts and reviewers |
-| `system-prompt` | task-body routing | `append` uses `--append-system-prompt`; `replace` uses `--system-prompt` | Use `replace` for hard role isolation, `append` when you want to preserve more surrounding context |
-| `session-mode` | `lineage-only` | Session seeding mode: `standalone`, `lineage-only`, or `fork` | Use the default `lineage-only` for a clean child that is still recorded as descended from the parent, `standalone` only for a clean unrelated child, and `fork` when the child needs the full parent context branch |
-| `fork-output-reserve-tokens` | `10000` | Token budget reserved for the child response when trimming inherited fork context; only applies to `session-mode: fork` and does not change the model's max output setting | Increase it for agents that write long results; decrease it to inherit more parent context when short answers are expected |
-| `spawning` | `false` | Allows or denies subagent-spawning tools | Set `true` only for coordinators that should launch other subagents |
-| `async` | `true` | `true`: parent does not wait. `false`: parent waits. | Use `async: false` only when the parent needs the result before continuing |
-| `mode` | `interactive` | `interactive` pane or `background` headless child | Use `background` for autonomous work; keep `interactive` when visibility matters |
-| `timeout` | unset | Background timeout in seconds | Use only for background agents that should never run forever |
+| Field | Default | What it controls |
+| --- | --- | --- |
+| `name` | filename | Stable agent name used by `agent: "..."` |
+| `description` | unset | One-line routing hint for ambient awareness |
+| `enabled` | `true` | Set `false` to hide and block the agent |
+| `model` | Pi default | Child model, including optional thinking suffix |
+| `thinking` | model default | Child thinking level |
+| `cwd` | parent cwd | Working directory for the child |
+| `extensions` | all extensions | Comma-separated extension allowlist for the child |
+| `tools` | `all` | Built-in Pi tools: `all`, `none`, or a comma-separated subset of `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` |
+| `deny-tools` | unset | Extra tool names to remove from the child |
+| `skills` | unset | Comma-separated skills loaded into the child prompt |
+| `no-context-files` | `false` | Skip `AGENTS.md` and `CLAUDE.md` discovery in the child |
+| `no-session` | `false` | Use an ephemeral child session file and delete it after completion |
+| `auto-exit` | `false` | Close the child after a normal completion |
+| `system-prompt` | task body | `append` uses `--append-system-prompt`; `replace` uses `--system-prompt` |
+| `session-mode` | `lineage-only` | `standalone`, `lineage-only`, or `fork` |
+| `fork-output-reserve-tokens` | `10000` | Room reserved for the child task and answer when Pi trims forked history |
+| `spawning` | `false` | Allow the child to launch subagents |
+| `async` | `true` | `false` makes the launch sync |
+| `blocking` | `false` | Legacy sync flag. Prefer `async: false` |
+| `mode` | `interactive` | `interactive` pane or `background` process |
+| `timeout` | unset | Background timeout in seconds |
 
-#### How `session-mode` works
+Named-agent frontmatter wins over duplicate launch-time fields such as `model`, `tools`, `cwd`, and `mode`. A parent can still choose `async: false` to wait, and it can still request `fork: true` for a forked launch.
 
-`session-mode` controls how much of the parent session is seeded into the child.
-When omitted, it defaults to `lineage-only` because subagents are usually causally related to the parent even when they should not inherit the full transcript.
-From the model's point of view, the main difference is simple: `standalone` and `lineage-only` both start the child without the parent transcript, while `fork` copies the parent context branch into the child.
+## Ambient awareness
 
-The difference between `standalone` and `lineage-only` is runtime bookkeeping, not model memory:
+Ambient awareness is the quiet note Pi gives the parent model about available agents.
 
-- `lineage-only` starts a clean child session that records it descended from the parent session. Use this default when session trees, resume/debugging, artifact attribution, or orchestration history should show where the child came from without paying to copy the conversation.
-- `standalone` starts the same kind of clean child, but does not tie it to the parent by lineage metadata. Use this only when the child is genuinely unrelated to the parent session.
-- `fork` starts a child with the parent context branch copied in. Use this when the child needs the prior conversation, decisions, or files already discussed by the parent.
+Pi stores that note as a hidden custom message. The user does not see it as chat. The LLM sees it as context before it decides whether to call `subagent`.
 
-For `fork`, inherited context is trimmed against the child model's context window. `fork-output-reserve-tokens` controls how much room is left for the child's future response before inherited parent context is copied. It is a trimming reserve, not a provider `max_output_tokens` setting.
+The note contains agents with `description` fields and labels each one by what the child would see:
 
-In short: `standalone` is a clean unrelated child, `lineage-only` is a clean related child, and `fork` is a related child with inherited context.
+- `isolated context` means the child starts clean. The parent must write a self-contained task.
+- `forked context` means the child sees the parent transcript. The parent can rely on context already in the chat.
 
-For nested subagent launches, `parent` always means the immediate spawning session. If a child agent has `spawning: true` and launches another agent, the grandchild is recorded below that child in lineage:
+Pi sends ambient awareness once when a top-level session first needs it, then sends a fresh copy after reload if the agent list changed.
+
+Normal child sessions do not receive ambient awareness, even with `spawning: true`. They sit under a parent that made the first routing decision. A `standalone` child can receive its own ambient awareness because Pi treats it as a root session.
+
+Agents without descriptions remain launchable, but they do not appear in ambient awareness.
+
+Disable it with:
+
+```bash
+PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS=1 pi
+```
+
+## Launching and waiting
+
+Async launch:
+
+1. parent calls `subagent`
+2. child starts
+3. parent receives a “started” result
+4. child result comes back later by steer
+
+Sync launch:
+
+1. parent calls `subagent` with `async: false`, or the agent has `async: false`
+2. parent waits
+3. tool result contains the child result
+
+Use `subagent_wait` to wait for one running child. Use `subagent_join` to wait for a fixed set. Use `subagent_detach` to release a wait or join and let the child return by steer again.
+
+After an async launch, the parent should get out of the way unless it has separate work. If the parent keeps solving the delegated task, you paid for two agents to race each other.
+
+By default, a successful async launch ends the parent turn after the current tool batch. The children keep running. Their results come back later.
+
+Leave `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` unset, or set it to `0`, to keep that guard. Set it to `1` when you want the parent model to keep going after async launches.
+
+```bash
+PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 pi
+```
+
+That only removes the runtime stop. The parent still owns only work it did not delegate.
+
+## Session modes
+
+A child session has two questions:
+
+- should Pi attach it to the parent session tree?
+- should the child model see the parent transcript?
+
+`lineage-only` attaches the child to the tree and starts the model clean. This is the default. You keep lineage, resume paths, and artifact attribution without copying the whole parent chat.
+
+`standalone` starts clean and skips the parent link. Use it for unrelated work.
+
+`fork` attaches the child to the tree and copies parent context. Use it when the child needs decisions, files, or prior results already in the parent transcript.
+
+The `isolated context` and `forked context` labels from ambient awareness describe model memory. They do not describe where Pi stores the child in the session tree. A `lineage-only` child is still a child of the parent session even though its model starts clean.
+
+For nested launches, `parent` means the session that spawned the child:
 
 ```text
 top-level session
@@ -124,163 +177,152 @@ top-level session
     └── grandchild session
 ```
 
-This is true for `lineage-only` even though the grandchild receives a clean model context. `isolated context` describes memory inheritance, not lineage rendering. Use `standalone` only when you do not want the lineage link.
+### Forked sessions
 
-Parent catalogs show the memory boundary next to each agent: `isolated context` or `forked context`. The work stays the same; only the handoff changes. `isolated context` starts a fresh child chat, so write a self-contained task with the objective, relevant facts/files, constraints, and expected output. `forked context` continues this conversation on a new branch, so give the goal, boundary, and expected output without re-explaining everything.
+A fork copies the parent notebook into a new child run.
 
-`no-session: true` is separate from `session-mode`: it disables persistent child history by launching pi with `--session <ephemeral-file> --no-session`. With `session-mode: fork`, the extension seeds that ephemeral file the same way it seeds a normal fork, so the child sees inherited context as session history rather than as prompt text. With `session-mode: lineage-only`, there is no persistent child session to attach lineage metadata to; when combined with `no-session: true`, it is treated like `fork` so the child still inherits parent context and the ephemeral file is removed after completion.
+Pi trims that notebook before the child sees it. It reads the parent's recorded input-token checkpoints, keeps the newest useful slice, and drops old turns until the inherited history fits inside the child model's context window.
 
-#### How `extensions` works
+The context window is the child's total token budget for inherited history, the new task, tool chatter, and the answer it will write. If the copied parent history would exceed that budget, Pi cuts from the oldest safe point.
 
-You only need to define `extensions` for agents that should be restricted.
-If an agent does not set `extensions`, the child session behaves exactly as before and loads all extensions available to that child environment.
+A fork needs to know the child model's context window. Pin the agent to a registered model when Pi cannot infer it. If Pi cannot know the context window, it refuses the fork instead of guessing and overflowing the child.
 
-When you do set `extensions`, treat it as a comma-separated allowlist of normal `pi -e` extension sources.
-The child session starts with `--no-extensions` and then adds only the listed sources back.
+`fork-output-reserve-tokens` sets the part of the child context window that Pi refuses to fill with parent history. The child needs that space for the new task and its answer. A larger reserve gives the child more room to work. A smaller reserve lets it inherit more history.
 
-This allowlist is only for user-visible extension sources. The subagent protocol helper is injected separately so child sessions can still finish, ping the parent, and hand off artifacts. Do not list that helper in `extensions`; it is not an agent setting or an installable extension source.
+A fork also gets a handoff marker. Pi appends a short system-prompt note, then writes a hidden custom message with a `<subagent-boundary>` tag at the end of the copied transcript. The tag says: the old messages are background, and the next user message is the child task.
 
-Use local paths for local extensions:
+That marker prevents a common failure. A child can read the parent's old role, old tools, or old task and start acting like the parent. The marker tells it where the fork begins.
 
-```md
----
-name: reviewer
-extensions: .pi/extensions/my-safe-ext, ~/.pi/agent/extensions/other-ext
----
+The marker also steers the model. If you want a raw fork with no marker and no boundary instruction, set:
+
+```bash
+PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY=1
 ```
 
-Use source prefixes for package or remote sources:
+### `no-session: true`
 
-```md
----
-name: reviewer
-extensions: npm:@foo/bar, git:github.com/user/repo
----
-```
+`no-session: true` gives the child a temporary session file and deletes it after completion.
 
-Important details:
+For `fork`, Pi seeds that temporary file with trimmed parent history. For `lineage-only`, Pi also gives the child inherited context because there is no persistent child file where it can store lineage metadata.
 
-- Local paths do not need `npm:` or `git:` prefixes.
-- Package and remote sources should keep their normal `npm:`, `git:`, `https:`, or `ssh:` prefixes.
-- Bare names such as `subagents` are treated as paths, not package lookups. If you mean an installed or remote package, use its full source string.
+Use `no-session: true` for disposable children. Do not use it when you need resume, `caller_ping`, or durable child history.
 
-### Practical presets
+## Child lifecycle
 
-- **Scout / reviewer / analyzer**: `mode: background`, `auto-exit: true`
-- **Interactive specialist**: `mode: interactive`, usually no `auto-exit`
-- **Coordinator agent**: `spawning: true`
-- **Sync gatekeeper**: `async: false`
-- **Monorepo role agent**: `cwd: ./packages/...`
-- **Locked-down worker**: narrow `tools`, maybe `deny-tools`, maybe `extensions`
-
-If you want a concrete example of the style this package is built for, look at this scout agent:
-
-- [Scout agent gist by edxeth](https://gist.github.com/edxeth/11b6a6cdf7c6068771a5e3f96ab5e34b)
-
-That gist shows the intended shape: sharp role, explicit contract, minimal ambiguity.
-
-## How subagents behave
-
-A child can run in one of two ways.
-
-### Interactive
-
-The child gets its own pane or surface.
-
-Use this when you want visibility, live steering, or just prefer seeing the work happen.
-
-Supported backends:
-
-- [cmux](https://github.com/manaflow-ai/cmux)
-- [tmux](https://github.com/tmux/tmux)
-- [zellij](https://zellij.dev)
-- [WezTerm](https://wezfurlong.org/wezterm/)
-
-### Background
-
-The child runs headlessly as its own `pi -p` process.
-
-Use this for scouts, reviewers, analyzers, and other autonomous workers that do not need a pane.
-
-### Async, sync, wait, and join
-
-- **Async**: parent does not wait; result arrives later by steer.
-- **Sync**: parent waits before continuing. Set `async: false`, or use `subagent_wait` / `subagent_join` later.
-
-After an async launch, the parent should only continue with clearly non-overlapping work. If the next step would duplicate the child’s task, it should stop and wait for the steer result.
-
-Successful async launches request graceful tool-batch termination, so Pi returns to the user or waits for steer delivery instead of making another autonomous parent LLM call immediately after the launch.
-
-`PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1` disables only that runtime stop request. This is an advanced escape hatch for users who intentionally want the parent agent free to continue after spawning async children. The ownership rule still applies: the parent should only continue with clearly non-overlapping work, and child results may arrive as steer messages while the parent keeps working.
-
-## Why the runtime has so many settings
-
-Because there is no single sane policy for all agents.
-
-A codebase scout should usually run autonomously and get out of the way. A reviewer may need sync behavior. A long-running background worker may need a timeout. An interactive child may need to stay open after user takeover instead of auto-exiting. A parent may want to cancel one child and abandon another.
-
-This package exposes those differences instead of pretending they are the same thing.
-
-That is the whole philosophy.
-
-## Child-to-parent handoff
-
-There are three main ways a child finishes.
+A child can finish in three ways.
 
 ### `auto-exit`
 
-Best for autonomous workers. The child exits when its turn finishes normally.
+Use `auto-exit: true` for autonomous agents. The child exits after a normal assistant completion.
 
 ### `subagent_done`
 
-Best for manual-lifecycle agents that should close themselves only after they decide the assigned task is complete.
+Manual-lifecycle children get a `subagent_done` tool. The child writes its final assistant message, calls `subagent_done`, and Pi returns that final message to the parent.
 
-`subagent_done` is a child-session tool. The child calls it after its final assistant message to close the child session and return control to the parent. That last assistant message becomes the result summary delivered to the caller.
-
-The parent normally does not call `subagent_done`. Parent sessions use `subagent`, `subagent_wait`, `subagent_join`, `subagent_detach`, or `subagent_resume` to manage children. `subagent_done` is the child's side of the lifecycle contract.
-
-`subagent_done` is available only when it is useful. It is hidden for `auto-exit: true` agents because those agents already close after a normal completion. For `auto-exit: false` agents, it is available by default: manual lifecycle means the child does not close automatically after every normal turn, not that only the human can close it. If you want an interactive child that can only be ended by operator/process shutdown, deny this tool with `deny-tools`.
+Pi hides `subagent_done` for `auto-exit: true` agents. If you want an interactive child that only the operator can close, add `subagent_done` to `deny-tools`.
 
 ### `caller_ping`
 
-Best when the child needs help from the parent.
+Use `caller_ping` when the child needs the parent. The child sends a message up, exits, and leaves a session file that the parent can resume.
 
-A child can stop, send a message upward, and hand back a resumable session file. The parent can answer and resume that exact session later. That gives you a real feedback loop instead of a dead end.
+## Resuming child sessions
 
-## Child-to-parent output
+`subagent_resume` starts an existing child session again. You can pass a follow-up task.
 
-The child's final assistant message **is** its output. The extension forwards it to the parent via steer — no file writes needed. For very large outputs, use pi's built-in `write` tool with an explicit path and mention the path in the closing message.
+Resume tries to preserve the original launch shape: mode, model, prompt style, cwd, tools, extensions, and lifecycle settings. A resumed child should continue as the same child, even if the agent file changed after the first launch.
 
-`PI_ARTIFACT_PROJECT_ROOT` sets the internal scratch directory for task delivery files and launch scripts. You don't normally need to touch it.
+## Child output
 
-## Ambient awareness
+The child's final assistant message is its output.
 
-Top-level sessions can receive a hidden catalog of available named subagents built from agent descriptions.
+For large output, let the child use Pi's `write` tool and mention the path in its final message.
 
-That lets the parent model know which specialists exist and how much context each one gets, without spamming visible history. Child sessions do not get this catalog. Agents without descriptions remain launchable, but they are omitted from the ambient routing hint.
+## Child tools and extensions
 
-If you do not want that behavior, disable it.
+Children load all extensions by default. Set `extensions` when you want a smaller child environment.
+
+```md
+---
+name: reviewer
+extensions: .pi/extensions/safe-tools.ts, npm:@foo/bar
+---
+```
+
+When `extensions` is set, Pi launches the child with `--no-extensions`, injects the subagent protocol helper, then loads only the allowlisted extensions.
+
+Local paths stay paths. Package and remote sources keep their normal prefixes:
+
+```md
+---
+name: reviewer
+extensions: ./extensions/local.ts, npm:@foo/bar, git:github.com/user/repo
+---
+```
+
+The `tools` field narrows built-in Pi tools. Protocol tools such as `caller_ping` and `subagent_done` stay available unless you deny them.
+
+`spawning` defaults to `false`. That removes `subagent`, `subagents_list`, and `subagent_resume` from children. Set `spawning: true` only for coordinator agents.
+
+## Parent shutdown policy
+
+The `subagent` tool accepts `parentClosePolicy`:
+
+| Value | Effect |
+| --- | --- |
+| `terminate` | Stop the child when the parent session exits |
+| `cancel` | Try an interrupt first, then stop the child |
+| `abandon` | Leave the child running and stop delivering its result to the closed parent |
+
+The default is `terminate`.
+
+## UI
+
+The parent session gets a live widget above the editor. It shows running children, elapsed time, activity, and context usage.
+
+Every `subagent` call requires a short `title`. The widget shows that title instead of a raw task preview.
+
+Child sessions can also get session titles like:
+
+```text
+[scout agent] Auth flow reconnaissance
+```
+
+Disable child session titles with `PI_SUBAGENT_DISABLE_SESSION_TITLES=1`.
+
+## Launching children through a wrapper
+
+By default, the extension launches children with the same Pi entrypoint it can infer from the parent. If your real Pi command goes through a wrapper, set it:
+
+```bash
+PI_SUBAGENT_PI_COMMAND="tia pi" tia pi
+```
+
+The wrapper applies to new children and resumed children. Quoted paths work:
+
+```bash
+PI_SUBAGENT_PI_COMMAND="'/path with spaces/tia' pi" pi
+```
 
 ## Environment variables
 
-These are the ones worth knowing.
+User-facing knobs:
 
-### Core runtime
+| Variable | Use |
+| --- | --- |
+| `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper such as `tia pi` |
+| `PI_SUBAGENT_MUX` | Force `cmux`, `tmux`, `zellij`, or `wezterm` |
+| `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |
+| `PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS` | Disable ambient awareness |
+| `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` | Set `1` to let the parent keep running after async launches |
+| `PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY` | Set `1` for raw forks with no boundary marker |
+| `PI_SUBAGENT_DISABLE_SESSION_TITLES` | Disable automatic child session names |
+| `PI_ARTIFACT_PROJECT_ROOT` | Override internal artifact storage root |
+| `PI_SUBAGENT_SHELL_READY_DELAY_MS` | Change the pane startup delay before Pi sends the child command |
+| `PI_SUBAGENT_ENABLE_SET_TAB_TITLE` | Register the optional `set_tab_title` tool |
+| `PI_SUBAGENT_RENAME_TMUX_WINDOW` | Let `set_tab_title` rename the tmux window |
+| `PI_SUBAGENT_RENAME_TMUX_SESSION` | Let `set_tab_title` rename the tmux session |
 
-- `PI_SUBAGENT_MUX` — force the mux backend: `cmux`, `tmux`, `zellij`, or `wezterm`
-- `PI_CODING_AGENT_DIR` — override the global pi agent config root
-- `PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS` — disable the hidden top-level subagent catalog
-- `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` — opt out of the default graceful parent turn stop after async launches; set to `1` only when you want the parent free to continue after spawning children
-- `PI_SUBAGENT_DISABLE_SESSION_TITLES` — disable automatic child session titles such as `[scout agent] Auth flow reconnaissance`
-- `PI_ARTIFACT_PROJECT_ROOT` — override the internal scratch directory root; default is `~/.pi/history/<project>/artifacts/<session-id>/...`. You don't normally need to touch this.
-- `PI_SUBAGENT_SHELL_READY_DELAY_MS` — override the interactive shell startup delay before sending a child command (default `500`)
-- `PI_SUBAGENT_ENABLE_SET_TAB_TITLE` — opt in to registering the `set_tab_title` tool
-- `PI_SUBAGENT_RENAME_TMUX_WINDOW` — opt in to tmux window renaming
-- `PI_SUBAGENT_RENAME_TMUX_SESSION` — opt in to tmux session renaming
-
-### Runtime-managed internals
-
-These are normally set by the extension itself, but they matter if you are reading the codebase or debugging behavior:
+Runtime internals you may see while debugging:
 
 - `PI_DENY_TOOLS`
 - `PI_SUBAGENT_EXTENSIONS`
@@ -292,29 +334,24 @@ These are normally set by the extension itself, but they matter if you are readi
 - `PI_SUBAGENT_SESSION_TITLE`
 - `PI_SUBAGENT_AUTO_EXIT`
 
-### Live test knobs
+Live test knobs:
 
 - `PI_SUBAGENT_ALLOW_LIVE_WINDOWS`
 - `PI_SUBAGENT_LIVE_MODEL`
 - `PI_SUBAGENT_KEEP_E2E_TMP`
 - `PI_SUBAGENT_LIVE_LOCK_PATH`
 
-## UI
-
-The package adds two useful pieces of UI.
-
-The parent session gets a live subagent widget above the editor showing running children, elapsed time, activity, and basic context usage. Every `subagent` tool call requires a concise `title`; the widget shows that title instead of a raw task/prompt preview.
-
-Each child session also gets its own tools widget so you can see what is available and what is denied. Child session titles use `[<agent> agent] <title>`.
-
-That sounds minor until you start juggling several agents. Then it stops sounding minor.
-
 ## Testing
 
-There are ordinary tests and live end-to-end smoke tests.
+Unit tests:
 
 ```bash
 npm test
+```
+
+Live tests:
+
+```bash
 PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 npm run test:e2e-live
 PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 npm run test:e2e-live-blocking
 PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 npm run test:e2e-live-mix-blocking
@@ -324,7 +361,7 @@ npm run test:e2e-live-extensions
 npm run test:e2e-live-stop-after-turn
 ```
 
-The live tests are intentionally gated so they do not spray terminal windows all over your machine by accident.
+The live window tests require an explicit opt-in because they open real terminal windows.
 
 ## Credits
 
