@@ -229,6 +229,7 @@ interface AgentDefaults {
 	noSession?: boolean;
 	timeout?: number;
 	forkOutputReserveTokens?: number;
+	flags?: string;
 }
 
 interface ResolvedAgentDefinition extends AgentDefaults {
@@ -378,6 +379,7 @@ function parseAgentDefinition(
 				: undefined,
 		timeout: timeoutRaw != null ? parseInt(timeoutRaw, 10) : undefined,
 		forkOutputReserveTokens: parseOptionalNonNegativeInteger(forkOutputReserveTokensRaw),
+		flags: get("flags"),
 	};
 }
 
@@ -1204,6 +1206,7 @@ interface PersistedSubagentLaunchMetadata {
 	systemPrompt?: string;
 	boundarySystemPrompt: boolean;
 	forkOutputReserveTokens?: number;
+	flags?: string;
 }
 
 function writeSubagentLaunchMetadataEntry(path: string, metadata: PersistedSubagentLaunchMetadata): void {
@@ -2740,6 +2743,16 @@ export function getExtensionLaunchArgsForTest(extensionSpecs: string[] | undefin
 	return getExtensionLaunchArgs(extensionSpecs, mandatoryExtensionPath);
 }
 
+/**
+ * Parse a flags string into an argv array using the same word-splitting
+ * logic as PI_SUBAGENT_PI_COMMAND. Returns an empty array when the input
+ * is undefined, empty, or whitespace-only.
+ */
+export function getFlagsLaunchArgs(flags: string | undefined): string[] {
+	if (!flags?.trim()) return [];
+	return parseCommandWords(flags);
+}
+
 function getPreparedExtensionLaunchArgs(prepared: PreparedSubagentLaunch, mandatoryExtensionPath: string): string[] {
 	return getExtensionLaunchArgs(prepared.effectiveExtensions, mandatoryExtensionPath);
 }
@@ -2767,6 +2780,7 @@ function getPersistedSessionParityArgs(metadata: PersistedSubagentLaunchMetadata
 	if (metadata.modelRef) args.push("--model", metadata.modelRef);
 	if (metadata.noContextFiles) args.push("--no-context-files");
 	args.push(...getSubagentToolLaunchArgs(metadata.tools, new Set(metadata.denyTools)));
+	args.push(...getFlagsLaunchArgs(metadata.flags));
 	return args;
 }
 
@@ -2966,6 +2980,7 @@ function buildPersistedSubagentLaunchMetadata(
 		...(systemPrompt ? { systemPrompt } : {}),
 		boundarySystemPrompt,
 		...(forkOutputReserveTokens !== undefined ? { forkOutputReserveTokens } : {}),
+		...(prepared.agentDefs?.flags ? { flags: prepared.agentDefs.flags } : {}),
 	};
 }
 
@@ -3081,6 +3096,7 @@ async function launchBackgroundSubagent(
 		writeSubagentLaunchMetadataEntry(prepared.subagentSessionFile, launchMetadata);
 	}
 	args.push(...getSubagentToolLaunchArgs(prepared.effectiveTools, prepared.denySet));
+	args.push(...getFlagsLaunchArgs(prepared.agentDefs?.flags));
 
 	const taskArg = `@${writeTaskArtifact(params.name, fullTask, ctx)}`;
 	for (const promptArg of buildPiPromptArgs(getPreparedSkillList(prepared), taskArg, directTask)) {
@@ -3386,6 +3402,9 @@ async function launchSubagent(
 	}
 	for (const arg of getSubagentToolLaunchArgs(prepared.effectiveTools, prepared.denySet)) {
 		parts.push(shellEscape(arg));
+	}
+	for (const flag of getFlagsLaunchArgs(prepared.agentDefs?.flags)) {
+		parts.push(shellEscape(flag));
 	}
 
 	// Env vars (shell-escaped for inline prefix)

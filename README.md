@@ -94,6 +94,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `system-prompt` | task body | `append` uses `--append-system-prompt`; `replace` uses `--system-prompt` |
 | `session-mode` | `lineage-only` | `standalone`, `lineage-only`, or `fork` |
 | `fork-output-reserve-tokens` | `10000` | Room reserved for the child task and answer when Pi trims forked history |
+| `flags` | unset | Extra CLI flags passed to the child pi process (e.g. `--verbose` or `--some-custom-flag`). Appended after all generated args — last-wins semantics against conflicting generated args. Useful for extension-registered flags or pi built-in flags not covered by other frontmatter fields. |
 | `spawning` | `false` | Allow the child to launch subagents |
 | `async` | `true` | `false` makes the launch sync |
 | `blocking` | `false` | Legacy sync flag. Prefer `async: false` |

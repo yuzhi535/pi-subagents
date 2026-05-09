@@ -84,6 +84,7 @@ import {
   resolveEffectiveSessionModeForTest,
   resolveForkOutputReserveTokensForTest,
   resolveTaskSessionModeForTest,
+  getFlagsLaunchArgs,
   resolveSubagentExtensionsForTest,
   resolveSubagentNoContextFilesForTest,
   resolveSubagentNoSessionForTest,
@@ -969,6 +970,32 @@ describe("subagents/index.ts helpers", () => {
     assert.equal(getAgentConfigDirForTest(), "/tmp/custom-agent-root");
   });
 
+  it("parses getFlagsLaunchArgs from a flags string", () => {
+    assert.deepEqual(getFlagsLaunchArgs("--plan"), ["--plan"]);
+    assert.deepEqual(getFlagsLaunchArgs("--plan --foo bar"), ["--plan", "--foo", "bar"]);
+  });
+
+  it("returns empty array for undefined, empty, or whitespace-only flags", () => {
+    assert.deepEqual(getFlagsLaunchArgs(undefined), []);
+    assert.deepEqual(getFlagsLaunchArgs(""), []);
+    assert.deepEqual(getFlagsLaunchArgs("   "), []);
+  });
+
+  it("handles quoted flag values via parseCommandWords", () => {
+    assert.deepEqual(getFlagsLaunchArgs("--plan 'arg with spaces'"), ["--plan", "arg with spaces"]);
+  });
+
+  it("passes flags through getPiInvocation for background children", () => {
+    const args = ["-p", "--session", "/tmp/test.jsonl", "--flags-injected"];
+    const invocation = getPiInvocationForTest(args);
+    assert.ok(invocation.args.includes("--flags-injected"), "flags should appear in pi invocation args");
+  });
+
+  it("shell-escapes flags in getPiShellParts for interactive children", () => {
+    const parts = getPiShellPartsForTest(["--session", "/tmp/s.jsonl", "--custom-flag"]);
+    assert.ok(parts.join(" ").includes("--custom-flag"), "custom flag should be in shell parts");
+  });
+
   it("preserves the default launcher when no subagent command override is set", () => {
     delete process.env.PI_SUBAGENT_PI_COMMAND;
     delete process.env.TIA_ACTIVE;
@@ -1170,6 +1197,41 @@ describe("subagents/index.ts helpers", () => {
 
     const invalid = loadAgentDefaults("tester");
     assert.equal(invalid?.forkOutputReserveTokens, undefined);
+  });
+
+  it("parses flags frontmatter and makes it available on AgentDefaults", () => {
+    const dir = createTestDir();
+    const agentsDir = join(dir, ".pi", "agents");
+    const configDir = join(dir, "config");
+    mkdirSync(agentsDir, { recursive: true });
+    mkdirSync(join(configDir, "agents"), { recursive: true });
+    writeFileSync(
+      join(configDir, "agents", "tester.md"),
+      `---\nname: tester\nflags: --plan --foo bar\n---\n\nTester body.`,
+    );
+    process.env.PI_CODING_AGENT_DIR = configDir;
+
+    const defs = loadAgentDefaults("tester");
+    assert.equal(defs?.flags, "--plan --foo bar");
+
+    // Clean up
+    process.env.PI_CODING_AGENT_DIR = "/tmp";
+  });
+
+  it("returns undefined for agents without flags", () => {
+    const dir = createTestDir();
+    const configDir = join(dir, "config");
+    mkdirSync(join(configDir, "agents"), { recursive: true });
+    writeFileSync(
+      join(configDir, "agents", "tester.md"),
+      `---\nname: tester\nauto-exit: true\n---\n\nTester body.`,
+    );
+    process.env.PI_CODING_AGENT_DIR = configDir;
+
+    const defs = loadAgentDefaults("tester");
+    assert.equal(defs?.flags, undefined);
+
+    process.env.PI_CODING_AGENT_DIR = "/tmp";
   });
 
   it("launches no-session children through an ephemeral session path", () => {
