@@ -34,7 +34,6 @@ export interface JoinParams {
 	onTimeout?: "error" | "return_partial" | "detach" | "return";
 }
 
-
 interface SubagentPing {
 	name: string;
 	message: string;

@@ -1,6 +1,6 @@
+import { existsSync, readFileSync, statSync } from "node:fs";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth } from "@mariozechner/pi-tui";
-import { existsSync, readFileSync, statSync } from "node:fs";
 import type {
 	RunningSubagent,
 	SessionContentBlock,
@@ -71,7 +71,10 @@ function describeActivity(toolNames: string[], responseText?: string): string {
 	return preview || "thinking…";
 }
 
-function renderAgentBadge(theme: WidgetThemeLike, agent: RunningSubagent): string {
+function renderAgentBadge(
+	theme: WidgetThemeLike,
+	agent: RunningSubagent,
+): string {
 	const label = agent.agent ?? "subagent";
 	if (agent.deliveryState === "detached") {
 		return theme.fg("muted", `[${label}]`);
@@ -122,9 +125,13 @@ export class SubagentWidgetManager {
 			modelId = rest.join("/");
 		}
 		if (!provider) return undefined;
-		const candidates = [modelId, modelId.replace(/:[^:]+$/, "")].filter(Boolean);
+		const candidates = [modelId, modelId.replace(/:[^:]+$/, "")].filter(
+			Boolean,
+		);
 		const model = [...new Set(candidates)]
-			.map((candidate) => this.latestCtx!.modelRegistry.find(provider!, candidate))
+			.map((candidate) =>
+				this.latestCtx?.modelRegistry.find(provider!, candidate),
+			)
 			.find(Boolean);
 		return model?.contextWindow;
 	}
@@ -191,13 +198,19 @@ export class SubagentWidgetManager {
 		if (!resolvedProvider && !fallbackContextWindow) return undefined;
 
 		let contextWindow = fallbackContextWindow ?? 0;
-		if (!contextWindow && this.latestCtx?.modelRegistry?.find && resolvedProvider) {
+		if (
+			!contextWindow &&
+			this.latestCtx?.modelRegistry?.find &&
+			resolvedProvider
+		) {
 			const candidates = [
 				resolvedModelId,
 				resolvedModelId.replace(/:[^:]+$/, ""),
 			].filter(Boolean);
 			const model = [...new Set(candidates)]
-				.map((candidate) => this.latestCtx!.modelRegistry.find(resolvedProvider!, candidate))
+				.map((candidate) =>
+					this.latestCtx?.modelRegistry.find(resolvedProvider!, candidate),
+				)
 				.find(Boolean);
 			contextWindow = model?.contextWindow ?? 0;
 		}
@@ -277,7 +290,8 @@ export class SubagentWidgetManager {
 			const pendingTools = new Map<string, string>();
 			if (lastAssistantIndex >= 0 && Array.isArray(lastAssistant?.content)) {
 				for (const block of lastAssistant.content) {
-					if (block?.type !== "toolCall" || typeof block.id !== "string") continue;
+					if (block?.type !== "toolCall" || typeof block.id !== "string")
+						continue;
 					pendingTools.set(
 						block.id,
 						typeof block.name === "string" ? block.name : "tool",
@@ -303,7 +317,7 @@ export class SubagentWidgetManager {
 							(block: SessionContentBlock) =>
 								block?.type === "text" && typeof block.text === "string",
 						)
-						.map((block: SessionContentBlock) => block.text!.trim())
+						.map((block: SessionContentBlock) => block.text?.trim())
 						.filter(Boolean)
 						.join("\n")
 				: "";
@@ -339,7 +353,10 @@ export class SubagentWidgetManager {
 		}
 	}
 
-	private renderSubagentWidget(tui: WidgetTuiLike, theme: WidgetThemeLike): string[] {
+	private renderSubagentWidget(
+		tui: WidgetTuiLike,
+		theme: WidgetThemeLike,
+	): string[] {
 		const agents = [...this.getAgents()];
 		if (agents.length === 0) return [];
 
@@ -371,7 +388,8 @@ export class SubagentWidgetManager {
 				stats.push(agent.contextLabel);
 			} else {
 				const totalTokens = agent.totalTokens ?? 0;
-				if (totalTokens > 0) stats.push(`${formatCompactCount(totalTokens)} tokens`);
+				if (totalTokens > 0)
+					stats.push(`${formatCompactCount(totalTokens)} tokens`);
 			}
 
 			const header =
@@ -382,7 +400,8 @@ export class SubagentWidgetManager {
 					: "");
 			lines.push(header);
 
-			const displayTitle = agent.taskPreview ?? firstNonEmptyLine(agent.title ?? agent.task, 46);
+			const displayTitle =
+				agent.taskPreview ?? firstNonEmptyLine(agent.title ?? agent.task, 46);
 			if (displayTitle) {
 				lines.push(
 					theme.fg("dim", childConnector) +
@@ -392,15 +411,16 @@ export class SubagentWidgetManager {
 
 			const activity = agent.activity ?? "starting…";
 			lines.push(
-				theme.fg("dim", childConnector) +
-					theme.fg("dim", `  ${activity}`),
+				theme.fg("dim", childConnector) + theme.fg("dim", `  ${activity}`),
 			);
 		}
 
 		const leftPadding = " ".repeat(Math.min(WIDGET_HORIZONTAL_PADDING, width));
 		const contentWidth = Math.max(0, width - leftPadding.length);
 
-		return lines.map((line) => `${leftPadding}${truncateToWidth(line, contentWidth)}`);
+		return lines.map(
+			(line) => `${leftPadding}${truncateToWidth(line, contentWidth)}`,
+		);
 	}
 
 	private ensureWidgetRegistered(): void {

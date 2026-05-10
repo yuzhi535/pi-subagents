@@ -7,8 +7,8 @@
  * based only on those checkpoints. No tokenizer guesses are used here.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname } from "path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export interface TrimmedForkSessionOptions {
 	/** The child model's total context window in tokens. */
@@ -63,7 +63,10 @@ function readSessionEntries(sessionFile: string): ParsedEntry[] {
 	return entries;
 }
 
-function buildSessionHeader(headerEntry: ParsedEntry, parentSessionFile: string): string {
+function buildSessionHeader(
+	headerEntry: ParsedEntry,
+	parentSessionFile: string,
+): string {
 	return JSON.stringify({
 		...headerEntry.parsed,
 		timestamp: new Date().toISOString(),
@@ -76,7 +79,9 @@ function getMessage(entry: ParsedEntry): Record<string, unknown> | undefined {
 	return entry.parsed.message as Record<string, unknown> | undefined;
 }
 
-function getAssistantUsage(entry: ParsedEntry): Record<string, unknown> | undefined {
+function getAssistantUsage(
+	entry: ParsedEntry,
+): Record<string, unknown> | undefined {
 	const msg = getMessage(entry);
 	if (msg?.role !== "assistant") return undefined;
 	const stopReason = msg.stopReason as string | undefined;
@@ -103,13 +108,21 @@ function hasToolCallId(entry: ParsedEntry, toolCallId: string): boolean {
 	});
 }
 
-function getEntriesBeforeLaunch(entries: ParsedEntry[], launchToolCallId?: string): ParsedEntry[] {
+function getEntriesBeforeLaunch(
+	entries: ParsedEntry[],
+	launchToolCallId?: string,
+): ParsedEntry[] {
 	if (!launchToolCallId) return entries;
-	const launchIndex = entries.findIndex((entry) => hasToolCallId(entry, launchToolCallId));
+	const launchIndex = entries.findIndex((entry) =>
+		hasToolCallId(entry, launchToolCallId),
+	);
 	return launchIndex < 0 ? entries : entries.slice(0, launchIndex);
 }
 
-function getLatestTokenSegment(entries: ParsedEntry[], parentSessionFile: string): TokenSegment | undefined {
+function getLatestTokenSegment(
+	entries: ParsedEntry[],
+	parentSessionFile: string,
+): TokenSegment | undefined {
 	let sawAssistant = false;
 	let previousTokens = 0;
 	let previousAssistantIndex = -1;
@@ -156,7 +169,11 @@ function getLatestTokenSegment(entries: ParsedEntry[], parentSessionFile: string
 	return { entries: entries.slice(segmentStart), totalTokens };
 }
 
-function findTrimStart(entries: ParsedEntry[], totalTokens: number, budget: number): number {
+function findTrimStart(
+	entries: ParsedEntry[],
+	totalTokens: number,
+	budget: number,
+): number {
 	const overflow = totalTokens - budget;
 	let previousAssistantTokens = 0;
 	let previousAssistantIndex = -1;
@@ -219,7 +236,8 @@ export function writeTrimmedForkSession(
 ): void {
 	const entries = readSessionEntries(parentSessionFile);
 	const headerEntry = entries.find((entry) => entry.parsed.type === "session");
-	if (!headerEntry) throw new Error(`No session header found in ${parentSessionFile}`);
+	if (!headerEntry)
+		throw new Error(`No session header found in ${parentSessionFile}`);
 
 	const reserveTokens = options.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
 	const budget = options.childContextWindow - reserveTokens;
@@ -228,15 +246,26 @@ export function writeTrimmedForkSession(
 		return;
 	}
 
-	const entriesBeforeLaunch = getEntriesBeforeLaunch(entries, options.launchToolCallId);
+	const entriesBeforeLaunch = getEntriesBeforeLaunch(
+		entries,
+		options.launchToolCallId,
+	);
 	const segment = getLatestTokenSegment(entriesBeforeLaunch, parentSessionFile);
 	if (!segment) {
 		writeChildSession([], headerEntry, childSessionFile, parentSessionFile);
 		return;
 	}
 
-	const entriesToKeep = segment.totalTokens <= budget
-		? segment.entries
-		: segment.entries.slice(findTrimStart(segment.entries, segment.totalTokens, budget));
-	writeChildSession(entriesToKeep, headerEntry, childSessionFile, parentSessionFile);
+	const entriesToKeep =
+		segment.totalTokens <= budget
+			? segment.entries
+			: segment.entries.slice(
+					findTrimStart(segment.entries, segment.totalTokens, budget),
+				);
+	writeChildSession(
+		entriesToKeep,
+		headerEntry,
+		childSessionFile,
+		parentSessionFile,
+	);
 }
