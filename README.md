@@ -81,7 +81,6 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `flags` | unset | Extra CLI flags passed to the child pi process (e.g. `--verbose` or `--some-custom-flag`). Appended after all generated args — last-wins semantics against conflicting generated args. Useful for extension-registered flags or pi built-in flags not covered by other frontmatter fields. |
 | `spawning` | `false` | Allow the child to launch subagents |
 | `async` | `true` | `false` makes the launch sync |
-| `blocking` | `false` | Legacy sync flag. Prefer `async: false` |
 | `mode` | `interactive` | `interactive` pane or `background` process |
 | `parent-close-policy` | `terminate` | What happens to the child when the parent session exits: `terminate` (kill) or `continue` (leave running) |
 
@@ -103,12 +102,6 @@ Pi sends ambient awareness once when a top-level session first needs it, then se
 Normal child sessions do not receive ambient awareness, even with `spawning: true`. They sit under a parent that made the first routing decision. A `standalone` child can receive its own ambient awareness because Pi treats it as a root session.
 
 Agents without descriptions remain launchable, but they do not appear in ambient awareness.
-
-Disable it with:
-
-```bash
-PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS=1 pi
-```
 
 ## Launching and waiting
 
@@ -313,7 +306,6 @@ User-facing knobs:
 | `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper command |
 | `PI_SUBAGENT_MUX` | Force `cmux`, `tmux`, `zellij`, or `wezterm` |
 | `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |
-| `PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS` | Disable ambient awareness |
 | `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` | Set `1` to let the parent keep running after async launches |
 | `PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY` | Set `1` for raw forks with no boundary marker |
 | `PI_SUBAGENT_DISABLE_SESSION_TITLES` | Disable automatic child session names |

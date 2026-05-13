@@ -113,9 +113,9 @@ export function requestSubagentBatchStop(): void {
 
 export function getCoordinatorOnlyTurnPrompt(): string {
 	if (isCoordinatorOnlyTurnDisabled()) {
-		return "Coordinator-only turn stop is disabled by PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1; after async launches you may continue only with explicitly non-overlapping parent-owned work. Do not redo delegated work.";
+		return "You may continue with non-overlapping work after launching a tool_return=later_message helper. Do not redo delegated work or claim results before the later report appears.";
 	}
-	return "Async launches request a graceful stop after the current tool batch so results can arrive by steer instead of provoking another autonomous parent continuation. PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 disables only that runtime stop; the ownership contract still applies.";
+	return "For helpers with tool_return=later_message, the runtime may stop after this tool batch so the helper's later report can be inserted into this chat. Do not redo delegated work or claim results before the later report appears.";
 }
 
 export function getSubagentBatchStopMetadata(): { terminate?: true } {

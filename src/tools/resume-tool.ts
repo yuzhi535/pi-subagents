@@ -40,15 +40,13 @@ export function registerSubagentResumeTool(
 		name: "subagent_resume",
 		label: "Resume Subagent",
 		description:
-			"Resume a previous sub-agent session in a new multiplexer pane. " +
-			"IMPORTANT: Returns IMMEDIATELY — the resumed session runs asynchronously in the background. " +
-			"Results are delivered later via a steer message. Do NOT fabricate or assume results. " +
-			"Use when a sub-agent was cancelled or needs follow-up work.",
+			"Continue a previous subagent session from its session file, optionally sending a follow-up task.",
 		promptSnippet:
-			"Resume a previous sub-agent session in a new multiplexer pane. " +
-			"IMPORTANT: Returns IMMEDIATELY — the resumed session runs asynchronously in the background. " +
-			"Results are delivered later via a steer message. Do NOT fabricate or assume results. " +
-			"Use when a sub-agent was cancelled or needs follow-up work.",
+			"Use subagent_resume when an earlier helper session was cancelled, left open, or needs follow-up work with its existing context.\n" +
+			"\n" +
+			"Provide sessionFile from the earlier subagent output. If you include task, it is sent as the next instruction in that resumed session.\n" +
+			"\n" +
+			"The resumed helper may run in a visible terminal or hidden process depending on saved metadata or the mode argument. The tool usually returns after starting it; the helper's final report appears later in this chat when it finishes. Do not invent or assume resumed-session results before that later message appears.",
 		parameters: Type.Object({
 			sessionFile: Type.Optional(Type.String({ description: "Path to the session .jsonl file to resume" })),
 			name: Type.Optional(Type.String({ description: "Display name for the terminal tab. Default: 'Resume'" })),

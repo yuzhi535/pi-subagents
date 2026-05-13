@@ -3,7 +3,6 @@ import type { AgentDefaults } from "../agents/definitions.ts";
 /** Tools that are gated by `spawning: false` */
 const SPAWNING_TOOLS = new Set([
 	"subagent",
-	"subagents_list",
 	"subagent_resume",
 ]);
 

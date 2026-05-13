@@ -7,7 +7,6 @@ import type { AgentListEntry } from "./agents/agent-list.ts";
 import {
 	getAgentListEntries as getAgentListEntriesFromDefinitions,
 	getAgentListSignature,
-	isAmbientAwarenessDisabled,
 	renderAgentListReminder,
 } from "./agents/agent-list.ts";
 import {
@@ -110,8 +109,8 @@ function resolveTaskSessionMode(
 	);
 }
 
-let lastAmbientCatalogSignature: string | null = null;
-let pendingAmbientCatalogReminder: {
+let lastAmbientRosterSignature: string | null = null;
+let pendingAmbientRoster: {
 	signature: string;
 	content: string;
 	entries: AgentListEntry[];
@@ -154,34 +153,29 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		applySubagentLineage(ctx);
 		applySubagentSessionTitle(ctx);
 		attachWidgetContext(ctx);
-		if (isAmbientAwarenessDisabled()) {
-			pendingAmbientCatalogReminder = null;
-			return;
-		}
 		if (!shouldRegister("subagent")) return;
-		if (ctx.sessionManager.getHeader()?.parentSession) return;
 
 		// Reset the cached signature on every fresh session so module-level state
 		// does not leak between sessions. The reload path still uses the cached
 		// signature to avoid duplicating the notification within the same session.
 		if (event.reason !== "reload") {
-			lastAmbientCatalogSignature = null;
+			lastAmbientRosterSignature = null;
 		}
 
 		const entries = getAgentListEntries(ctx.cwd);
 		const signature = getAgentListSignature(entries);
 		if (entries.length === 0) {
-			if (event.reason === "reload") pendingAmbientCatalogReminder = null;
-			lastAmbientCatalogSignature = null;
+			if (event.reason === "reload") pendingAmbientRoster = null;
+			lastAmbientRosterSignature = null;
 			return;
 		}
 
-		if (signature === lastAmbientCatalogSignature) {
-			pendingAmbientCatalogReminder = null;
+		if (signature === lastAmbientRosterSignature) {
+			pendingAmbientRoster = null;
 			return;
 		}
 
-		pendingAmbientCatalogReminder = {
+		pendingAmbientRoster = {
 			signature,
 			content: renderAgentListReminder(entries),
 			entries,
@@ -190,18 +184,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", () => {
-		if (isAmbientAwarenessDisabled()) {
-			pendingAmbientCatalogReminder = null;
-			return undefined;
-		}
-		if (!pendingAmbientCatalogReminder) return undefined;
+		if (!pendingAmbientRoster) return undefined;
 
-		const reminder = pendingAmbientCatalogReminder;
-		lastAmbientCatalogSignature = reminder.signature;
-		pendingAmbientCatalogReminder = null;
+		const reminder = pendingAmbientRoster;
+		lastAmbientRosterSignature = reminder.signature;
+		pendingAmbientRoster = null;
 		return {
 			message: {
-				customType: "subagent_catalog",
+				customType: "subagent_roster",
 				content: reminder.content,
 				display: false,
 				details: {
@@ -268,12 +258,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	);
 
 	const shouldRegister = (name: string) => !deniedTools.has(name);
-	const hideSubagentsListForAmbientTopLevel =
-		!process.env.PI_SUBAGENT_SESSION &&
-		!isAmbientAwarenessDisabled() &&
-		shouldRegister("subagent");
 
-	registerSubagentCoreTools(pi, shouldRegister, hideSubagentsListForAmbientTopLevel, {
+	registerSubagentCoreTools(pi, shouldRegister, {
 		loadAgentDefaults: (agentName, cwd) => agentName ? loadAgentDefaults(agentName, undefined, cwd) : null,
 		resolveEffectiveSessionMode,
 		resolveTaskSessionMode,

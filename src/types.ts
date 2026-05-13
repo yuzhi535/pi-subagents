@@ -113,18 +113,6 @@ export interface StartedSubagentToolDetails {
 	autoExit?: boolean;
 }
 
-interface ListedSubagentInfo {
-	name: string;
-	description?: string;
-	model?: string;
-	mode?: string;
-	source: string;
-}
-
-export interface SubagentsListToolDetails {
-	agents?: ListedSubagentInfo[];
-}
-
 export interface ResumeToolDetails extends StartedSubagentToolDetails {
 	sessionFile?: string;
 }

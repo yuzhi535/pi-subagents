@@ -342,7 +342,6 @@ describe("agent definitions and catalog", () => {
 		assert.deepEqual([...resolveDenyToolsForTest(worker ?? null)].sort(), [
 			"subagent",
 			"subagent_resume",
-			"subagents_list",
 		]);
 		assert.deepEqual([...resolveDenyToolsForTest(coordinator ?? null)], []);
 	});
@@ -378,83 +377,6 @@ describe("agent definitions and catalog", () => {
 		);
 	});
 
-	it("lists descriptions and sparse launchable agents in subagents_list when ambient awareness is disabled", async () => {
-		const dir = createTestDir();
-		const prevCwd = process.cwd();
-		const prevKillSwitch = process.env.PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS;
-		const configDir = join(dir, "agent-root");
-		const agentsDir = join(configDir, "agents");
-		const projectAgentsDir = join(dir, ".pi", "agents");
-		mkdirSync(agentsDir, { recursive: true });
-		mkdirSync(projectAgentsDir, { recursive: true });
-		process.env.PI_CODING_AGENT_DIR = configDir;
-		process.env.PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS = "1";
-
-		writeFileSync(
-			join(agentsDir, "global-reviewer.md"),
-			`---\nname: global-reviewer\ndescription: Review changes\nmode: background\n---\n\nReviewer body.`,
-		);
-		writeFileSync(
-			join(projectAgentsDir, "sparse-agent.md"),
-			`---\nname: sparse-agent\nmode: interactive\n---\n\nSparse body.`,
-		);
-		writeFileSync(
-			join(projectAgentsDir, "disabled-agent.md"),
-			`---\nname: disabled-agent\nenabled: false\ndescription: hidden\n---\n\nDisabled body.`,
-		);
-
-		const tools = new Map<string, any>();
-		try {
-			process.chdir(dir);
-			subagentsExtension({
-				on() {},
-				registerCommand() {},
-				registerMessageRenderer() {},
-				sendMessage() {},
-				registerTool(definition: any) {
-					tools.set(definition.name, definition);
-					return definition;
-				},
-			} as any);
-
-			const listTool = tools.get("subagents_list");
-			assert.ok(listTool);
-			const result = await listTool.execute();
-			const listed = result.details.agents;
-			assert.deepEqual(
-				listed.map((entry: any) => entry.name),
-				getEffectiveAgentDefinitionsForTest(dir).map((entry) => entry.name),
-			);
-			assert.equal(
-				listed.some((entry: any) => entry.name === "disabled-agent"),
-				false,
-			);
-			assert.equal(
-				listed.some((entry: any) => entry.name === "sparse-agent"),
-				true,
-			);
-			assert.equal(
-				listed.find((entry: any) => entry.name === "global-reviewer")
-					?.description,
-				"Review changes",
-			);
-			assert.match(
-				result.content[0].text,
-				/global-reviewer \[isolated context\] — Review changes/,
-			);
-			assert.doesNotMatch(
-				result.content[0].text,
-				/\(background\)|\[.*claude.*\]|\[.*glm.*\]|\| use:/i,
-			);
-			assert.match(result.content[0].text, /sparse-agent/);
-		} finally {
-			process.chdir(prevCwd);
-			if (prevKillSwitch == null)
-				delete process.env.PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS;
-			else process.env.PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS = prevKillSwitch;
-		}
-	});
-
 	it("registers conservative delegation guidance on the subagent tool", () => {
 		const tools = new Map<string, any>();
 
@@ -471,76 +393,59 @@ describe("agent definitions and catalog", () => {
 
 		const tool = tools.get("subagent");
 		assert.ok(tool);
-		assert.match(tool.description, /specialist or parallelizable work/);
+		assert.match(tool.description, /named helper agents from the subagent roster/);
 		assert.match(
 			tool.promptSnippet,
-			/Use subagents for specialist, complex, or parallelizable work/,
+			/separate helper processes you can launch to do work outside this chat turn/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/Agent frontmatter is authoritative for all runtime settings/,
+			/Use exact agent names and behavior fields from the subagent roster when present; field meanings are defined in <subagent-rules>/,
 		);
-		assert.match(tool.promptSnippet, /CRITICAL multi-agent rule/);
-		assert.match(tool.promptSnippet, /call subagent once with children/);
-		assert.match(tool.promptSnippet, /Do not emit separate subagent tool calls/);
+		assert.match(tool.promptSnippet, /make one subagent call with children/);
 		assert.match(
 			tool.promptSnippet,
-			/Use exact agent names in each child agent field/,
-		);
-		assert.match(tool.promptSnippet, /include each named agent exactly once/);
-		assert.match(
-			tool.promptSnippet,
-			/do not reuse one agent as a substitute for another/,
+			/include each named agent exactly once/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/call-time duplicates for named agents are ignored/,
+			/Do not substitute one agent for another/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/translate the user's request into each child task/,
+			/Translate the user.s request into each helper.s task/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/do not change the work based on the agent name/,
+			/do not change the work just because of the agent name/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/Use the memory label only to decide context/,
-		);
-		assert.match(tool.promptSnippet, /isolated context starts a fresh chat/);
-		assert.match(
-			tool.promptSnippet,
-			/write a self-contained task with objective, relevant facts\/files, constraints, and expected output/,
+			/write readable Markdown with objective, scope, relevant files\/facts, constraints, and requested output/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/forked context continues this conversation on a new branch/,
+			/Do small direct work yourself: quick answers, simple file reads, and tiny one-shot edits/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/Handle trivial single-file reads, quick direct answers, and tiny one-shot edits yourself instead of delegating/,
-		);
-		assert.match(tool.promptSnippet, /Delegation ownership rule/);
-		assert.match(
-			tool.promptSnippet,
-			/explicitly non-overlapping parent-owned work/,
+			/Do not redo delegated work/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/end the response and let async results arrive by steer/,
+			/do not claim the helper's findings before its later message appears/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/Async launches request a graceful stop after the current tool batch/,
+			/For helpers with tool_return=later_message, the runtime may stop after this tool batch/,
 		);
 		assert.match(
 			tool.promptSnippet,
-			/PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 disables only that runtime stop/,
+			/Do not redo delegated work or claim results before the later report appears/,
 		);
 		assert.doesNotMatch(
 			tool.promptSnippet,
-			/Coordinator-only turn stop is disabled/,
+			/PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN/,
 		);
 	});
 
@@ -563,16 +468,12 @@ describe("agent definitions and catalog", () => {
 		assert.ok(tool);
 		assert.match(
 			tool.promptSnippet,
-			/Coordinator-only turn stop is disabled by PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1/,
-		);
-		assert.match(
-			tool.promptSnippet,
-			/you may continue only with explicitly non-overlapping parent-owned work/,
+			/You may continue with non-overlapping work after launching a tool_return=later_message helper/,
 		);
 		assert.match(tool.promptSnippet, /Do not redo delegated work/);
 		assert.doesNotMatch(
 			tool.promptSnippet,
-			/Async launches request a graceful stop after the current tool batch/,
+			/For helpers with tool_return=later_message, the runtime may stop/,
 		);
 	});
 

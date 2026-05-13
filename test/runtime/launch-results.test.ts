@@ -356,36 +356,35 @@ describe("subagent launch result delivery", () => {
 		});
 		const message = result?.message;
 		assert.ok(message);
-		assert.equal(message.customType, "subagent_catalog");
+		assert.equal(message.customType, "subagent_roster");
 		assert.equal(message.display, false);
 		assert.equal((message.details as any).entries[0].name, "reviewer");
 		assert.equal(
 			(message.details as any).signature,
 			getAgentListSignatureForTest((message.details as any).entries),
 		);
-		assert.match(message.content, /^<system-reminder>\n/);
-		assert.match(message.content, /Available named subagents:/);
+		assert.match(message.content, /^<system-reminder>\nYou can launch separate helper agents/);
 		assert.match(
 			message.content,
-			/reviewer \(background\) \[isolated context\] — Review changes for regressions/,
+			/`reviewer`: Review changes for regressions[\s\S]*?tool_return: later_message/m,
+		);
+		assert.match(message.content, /\n<\/subagent-roster>\n<subagent-rules>\n/);
+		assert.match(
+			message.content,
+			/tool_return=later_message means the tool call starts the helper and returns before the work is done; do not invent its findings/,
 		);
 		assert.match(
 			message.content,
-			/Memory label rule: isolated context means the subagent starts a fresh chat and cannot see this conversation/,
+			/context=fresh_chat_needs_full_brief means write a self-contained task with objective, files, constraints, and expected output/,
 		);
 		assert.match(
 			message.content,
-			/forked context means the subagent continues from this conversation on a new branch/,
+			/context=copy_of_this_chat means the helper starts from this conversation/,
 		);
-		assert.match(message.content, /\n<\/system-reminder>$/);
+		assert.match(message.content, /\n<\/subagent-rules>\n<\/system-reminder>$/);
 		assert.equal(
 			renderAgentListReminderForTest((message.details as any).entries),
 			message.content,
-		);
-		assert.doesNotMatch(message.content, /subagents_list/);
-		assert.match(
-			message.content,
-			/call subagent once with children: \[\.\.\.\] so the runtime starts every child before waiting/,
 		);
 		assert.equal(
 			handlers.get("before_agent_start")({
@@ -395,33 +394,6 @@ describe("subagent launch result delivery", () => {
 			}),
 			undefined,
 		);
-	});
-
-	it("does not register subagents_list for top-level ambient-aware sessions", () => {
-		const dir = createTestDir();
-		const configDir = join(dir, "agent-root");
-		const agentsDir = join(configDir, "agents");
-		mkdirSync(agentsDir, { recursive: true });
-		process.env.PI_CODING_AGENT_DIR = configDir;
-		writeFileSync(
-			join(agentsDir, "reviewer.md"),
-			`---\nname: reviewer\ndescription: Review changes for regressions\nmode: background\n---\n\nReviewer body.`,
-		);
-
-		const tools = new Map<string, any>();
-		subagentsExtension({
-			on() {},
-			registerCommand() {},
-			registerMessageRenderer() {},
-			sendMessage() {},
-			registerTool(definition: any) {
-				tools.set(definition.name, definition);
-				return definition;
-			},
-		} as any);
-
-		assert.ok(tools.get("subagent"));
-		assert.equal(tools.has("subagents_list"), false);
 	});
 
 	it("queues reload catalog changes for the next turn instead of interrupting immediately", () => {
@@ -490,7 +462,7 @@ describe("subagent launch result delivery", () => {
 		assert.equal((reloaded.message.details as any).supersedes, true);
 		assert.match(
 			reloaded.message.content,
-			/researcher \(background\) \[isolated context\] — Investigate open-ended questions/,
+			/`researcher`: Investigate open-ended questions[\s\S]*?tool_return: later_message[\s\S]*?runs_as: hidden_process[\s\S]*?context: fresh_chat_needs_full_brief[\s\S]*?completion: exits_automatically/,
 		);
 
 		handlers.get("session_start")(

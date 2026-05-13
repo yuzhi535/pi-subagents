@@ -2,8 +2,6 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "typebox";
 import type { AgentDefaults } from "../agents/definitions.ts";
-import { getEffectiveAgentDefinitions } from "../agents/definitions.ts";
-import { getSessionModeMemoryLabel } from "../agents/agent-list.ts";
 import {
 	enforceAgentFrontmatter,
 	getSubagentAgentRequirementError,
@@ -14,7 +12,7 @@ import {
 import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { isMuxAvailable, muxSetupHint, renameCurrentTab, renameWorkspace } from "../mux.ts";
 import { findRunningSubagent } from "../runtime/running-registry.ts";
-import type { RunningSubagent, SubagentParamsInput, SubagentsListToolDetails, SubagentResult } from "../types.ts";
+import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
 import { asSubagentToolResult, getCoordinatorOnlyTurnPrompt, markSubagentBatchBlocking } from "../runtime/state.ts";
 import { getNoSessionSeedMode } from "../launch/seed-child-session.ts";
 import { isSetTabTitleToolEnabled } from "../agents/titles.ts";
@@ -127,14 +125,38 @@ async function launchOneSubagent(
 export function registerSubagentCoreTools(
 	pi: ExtensionAPI,
 	shouldRegister: (name: string) => boolean,
-	hideSubagentsListForAmbientTopLevel: boolean,
 	runtime: SubagentToolRuntime,
 ): void {
 	if (shouldRegister("subagent")) pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
-		description: "Spawn one or more named sub-agents from existing agent definitions for specialist or parallelizable work. When multiple subagents are needed, pass them together in children so the runtime can launch all children before applying sync/blocking policy. The agent frontmatter is authoritative for all runtime settings; the parent only provides name, task, title, and which agent to launch. ",
-		promptSnippet: "Use subagents for specialist, complex, or parallelizable work when the available agents list suggests a good match. Agent frontmatter is authoritative for all runtime settings — mode, model, async/sync policy, tools, session mode — the parent only provides name, task, title, and which agent to launch. CRITICAL multi-agent rule: when a user asks for more than one agent, call subagent once with children: [...] so the runtime launches every child before waiting. Do not emit separate subagent tool calls for the same multi-agent request. If any child in children is sync/blocking, the runtime blocks until every child in that children array completes; if all are async, the runtime returns started results and later steer messages. Use exact agent names in each child agent field. If the user names several agents, include each named agent exactly once; do not reuse one agent as a substitute for another. Interactive agents run in panes; background agents run headlessly; named-agent frontmatter is authoritative for runtime settings, and call-time duplicates for named agents are ignored instead of overriding it. Before calling subagent, translate the user's request into each child task; do not change the work based on the agent name. For non-trivial work, write each task as readable Markdown: short paragraphs, bullets, or headings as appropriate; use a one-line task only for trivial work. Use the memory label only to decide context: isolated context starts a fresh chat, so write a self-contained task with objective, relevant facts/files, constraints, and expected output; forked context continues this conversation on a new branch, so give goal, boundary, and expected output without re-explaining everything. Handle trivial single-file reads, quick direct answers, and tiny one-shot edits yourself instead of delegating. Delegation ownership rule: after launching subagents, the parent may continue only with explicitly non-overlapping parent-owned work. Do not redo delegated work. If no safe independent work is clear, end the response and let async results arrive by steer. Ask the user only when there is a plausible next step but ownership is ambiguous. " + getCoordinatorOnlyTurnPrompt(),
+		description:
+			"Launch one or more named helper agents from the subagent roster. " +
+			"Agent definitions control model, tools, context, UI mode, wait behavior, and completion lifecycle; " +
+			"this call only chooses the agent name(s) and task(s).",
+		promptSnippet:
+			"Subagents are separate helper processes you can launch to do work outside this chat turn.\n" +
+			"\n" +
+			"Use this tool when a listed agent is a clear fit for specialist, complex, or parallel work. Do small direct work yourself: quick answers, simple file reads, and tiny one-shot edits.\n" +
+			"\n" +
+			"Use exact agent names and behavior fields from the subagent roster when present; field meanings are defined in <subagent-rules>.\n" +
+			"\n" +
+			"How to call:\n" +
+			"- Use exact roster names in agent fields.\n" +
+			"- If launching one helper, pass agent/name/title/task normally.\n" +
+			"- If launching multiple helpers for one user request, make one subagent call with children:[...] so all helpers start before any waiting happens.\n" +
+			"- If the user names multiple agents, include each named agent exactly once. Do not substitute one agent for another.\n" +
+			"\n" +
+			"Writing tasks:\n" +
+			"- Translate the user's request into each helper's task; do not change the work just because of the agent name.\n" +
+			"- For non-trivial work, write readable Markdown with objective, scope, relevant files/facts, constraints, and requested output.\n" +
+			"- For parallel helpers, make each task non-overlapping.\n" +
+			"\n" +
+			"After launch:\n" +
+			"- If a helper returns later, continue only with clearly independent work. Do not redo delegated work and do not claim the helper's findings before its later message appears.\n" +
+			"- If no safe independent work is clear, stop your response and wait for the later helper message.\n" +
+			"- Ask the user only when there is a plausible next step but ownership is ambiguous.\n" +
+			getCoordinatorOnlyTurnPrompt(),
 		parameters: SubagentParams,
 		execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
 			const children = getRequestedChildren(params as SubagentToolParams);
@@ -206,36 +228,6 @@ export function registerSubagentCoreTools(
 				return new Text("", 0, 0);
 			}
 			return renderSubagentCompletionText(result, options, theme, context.lastComponent instanceof Text ? context.lastComponent : undefined, true);
-		},
-	});
-
-	if (shouldRegister("subagents_list") && !hideSubagentsListForAmbientTopLevel) pi.registerTool({
-		name: "subagents_list", label: "List Subagents",
-		description: "List all available subagent definitions. Scans project-local .pi/agents/ and global ~/.pi/agent/agents/. Project-local agents override global ones with the same name.",
-		promptSnippet: "List all available subagent definitions. Scans project-local .pi/agents/ and global ~/.pi/agent/agents/. Project-local agents override global ones with the same name.",
-		parameters: Type.Object({}),
-		async execute() {
-			const agents = getEffectiveAgentDefinitions();
-			if (agents.length === 0) return { content: [{ type: "text", text: "No subagent definitions found." }], details: { agents: [] } };
-			const lines = agents.map((a) => {
-				const badge = a.source === "project" ? " (project)" : "";
-				const sessionTag = ` [${getSessionModeMemoryLabel(runtime.resolveTaskSessionMode(a) as never)}]`;
-				const desc = a.description ? ` — ${a.description}` : "";
-				return `• ${a.name}${badge}${sessionTag}${desc}`;
-			});
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { agents } };
-		},
-		renderResult(result, _opts, theme) {
-			const details = result.details as SubagentsListToolDetails | undefined;
-			const agents = details?.agents ?? [];
-			if (agents.length === 0) return new Text(theme.fg("dim", "No subagent definitions found."), 0, 0);
-			const lines = agents.map((a) => {
-				const badge = a.source === "project" ? theme.fg("accent", " (project)") : "";
-				const sessionTag = theme.fg("dim", ` [${getSessionModeMemoryLabel(runtime.resolveTaskSessionMode(a as AgentDefaults) as never)}]`);
-				const desc = a.description ? theme.fg("dim", ` — ${a.description}`) : "";
-				return `  ${theme.fg("toolTitle", theme.bold(a.name))}${badge}${sessionTag}${desc}`;
-			});
-			return new Text(lines.join("\n"), 0, 0);
 		},
 	});
 

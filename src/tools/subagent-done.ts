@@ -351,8 +351,8 @@ export default function (pi: ExtensionAPI) {
 		name: "caller_ping",
 		label: "Caller Ping",
 		description:
-			"Send a help request to the parent agent and exit this session. " +
-			"The parent will be notified and can resume this session with a response.",
+			"Ask the launching chat for help, send your message there, then close this helper session. " +
+			"The launching chat can later send follow-up instructions to continue this helper.",
 		parameters: callerPingParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const sessionFile = process.env.PI_SUBAGENT_SESSION;

@@ -8,16 +8,14 @@ export interface AgentListEntry {
 	source: "project" | "global";
 	mode?: "interactive" | "background";
 	sessionMode: SubagentSessionMode;
+	async?: boolean;
+	autoExit?: boolean;
 	description?: string;
 }
 
 export type ResolveSubagentSessionMode = (
 	agent: ResolvedAgentDefinition,
 ) => SubagentSessionMode;
-
-export function isAmbientAwarenessDisabled(): boolean {
-	return process.env.PI_SUBAGENT_DISABLE_AMBIENT_AWARENESS === "1";
-}
 
 export function getAgentListEntries(
 	baseCwd: string,
@@ -30,30 +28,59 @@ export function getAgentListEntries(
 			source: agent.source,
 			mode: agent.mode,
 			sessionMode: resolveSessionMode(agent),
+			async: agent.async,
+			autoExit: agent.autoExit,
 			description: agent.description,
 		}));
 }
 
-export function getSessionModeMemoryLabel(
-	sessionMode: SubagentSessionMode,
-): string {
-	return sessionMode === "fork" ? "forked context" : "isolated context";
+function getToolReturn(entry: AgentListEntry): "wait_here" | "later_message" {
+	return entry.async === false ? "wait_here" : "later_message";
+}
+
+function getRunsAs(entry: AgentListEntry): "visible_terminal" | "hidden_process" {
+	return entry.mode === "background" ? "hidden_process" : "visible_terminal";
+}
+
+function getContext(
+	entry: AgentListEntry,
+): "fresh_chat_needs_full_brief" | "copy_of_this_chat" {
+	return entry.sessionMode === "fork" ? "copy_of_this_chat" : "fresh_chat_needs_full_brief";
+}
+
+function getCompletion(
+	entry: AgentListEntry,
+): "exits_automatically" | "human_or_agent_must_finish" {
+	return entry.autoExit === false ? "human_or_agent_must_finish" : "exits_automatically";
 }
 
 export function renderAgentListReminder(
 	entries: AgentListEntry[],
 ): string {
-	const lines = entries.map((entry) => {
-		const modeTag = entry.mode === "background" ? " (background)" : "";
-		return `- ${entry.name}${modeTag} [${getSessionModeMemoryLabel(entry.sessionMode)}] — ${entry.description}`;
+	const agentLines = entries.map((entry) => {
+		return [
+			`- \`${entry.name}\`: ${entry.description}`,
+			`  tool_return: ${getToolReturn(entry)}`,
+			`  runs_as: ${getRunsAs(entry)}`,
+			`  context: ${getContext(entry)}`,
+			`  completion: ${getCompletion(entry)}`,
+		].join("\n");
 	});
 	const body = [
-		"Available named subagents:",
-		...lines,
-		"CRITICAL: The agent list above is for routing only. If the user names an agent and it is not found, do not mention other agents from this list, do not suggest alternatives. Just report the agent was not found and stop. Agent definitions are user-owned, not model-chosen.",
-		"Memory label rule: isolated context means the subagent starts a fresh chat and cannot see this conversation, so write a self-contained task with objective, relevant facts/files, constraints, and expected output. forked context means the subagent continues from this conversation on a new branch, so give goal, boundary, and expected output without re-explaining everything.",
-		"If this list is updated later, the newer version replaces this one. Use subagent explicitly.",
-		"When launching more than one child for the same request, call subagent once with children: [...] so the runtime starts every child before waiting.",
+		"You can launch separate helper agents with the subagent tool. Use this roster to choose exact agent names and to understand how each launched agent behaves.",
+		"<subagent-roster>",
+		agentLines.join("\n\n"),
+		"</subagent-roster>",
+		"<subagent-rules>",
+		"- Agent names are exact values for subagent.agent or children[].agent.",
+		"- tool_return=wait_here means the subagent tool call waits until the helper finishes.",
+		"- tool_return=later_message means the tool call starts the helper and returns before the work is done; do not invent its findings.",
+		"- runs_as=visible_terminal means a human can watch or type into the helper session. runs_as=hidden_process means no visible terminal is opened.",
+		"- context=fresh_chat_needs_full_brief means write a self-contained task with objective, files, constraints, and expected output.",
+		"- context=copy_of_this_chat means the helper starts from this conversation; give scope, boundary, and expected output without repeating all background.",
+		"- completion=exits_automatically means the helper should finish and close itself. completion=human_or_agent_must_finish means the session stays open until the human or helper explicitly completes it.",
+		"- If the user names an agent that is not listed, say it was not found and stop; do not suggest a different listed agent.",
+		"</subagent-rules>",
 	].join("\n");
 	return `<system-reminder>\n${body}\n</system-reminder>`;
 }
@@ -67,6 +94,8 @@ export function getAgentListSignature(
 			source: entry.source,
 			mode: entry.mode,
 			sessionMode: entry.sessionMode,
+			async: entry.async,
+			autoExit: entry.autoExit,
 			description: entry.description,
 		})),
 	);

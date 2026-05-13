@@ -226,10 +226,10 @@ function writeChildSession(
 	for (const entry of entries) {
 		if (entry.parsed.type !== "session") {
 			// Children never receive ambient awareness (skipped in session_start for
-			// parentSession sessions). Drop the catalog to avoid wasting context window.
+			// parentSession sessions). Drop the roster to avoid wasting context window.
 			if (
 				entry.parsed.type === "custom_message" &&
-				(entry.parsed as Record<string, unknown>).customType === "subagent_catalog"
+				(entry.parsed as Record<string, unknown>).customType === "subagent_roster"
 			) continue;
 			lines.push(serializeEntry(entry));
 		}
