@@ -2,7 +2,7 @@
 
 `pi-subagents` is a highly curated multi-agent framework for [Pi agent harness](https://github.com/earendil-works/pi-mono).
 
-It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), then grew into a monumental refactor: named agents, interactive panes, background workers, async parallelism, blocking agents, child-to-parent communication, forked context, a beautiful TUI widget, and much more!
+It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), then grew into a monumental refactor: named agents, interactive panes, background workers, async parallelism, blocking agents, child-to-parent communication, forked context, a beautiful TUI widget, orchestrator mode, and much more!
 
 Use it when one agent should hand work to another agent instead of trying to do everything in one transcript.
 
@@ -30,6 +30,67 @@ Two axes matter:
 `background` means headless. Pi starts a `pi -p` child process without opening a pane.
 
 Async means the parent gets a “started” result and the child answer comes back later. Sync means the parent waits for the child answer before it continues.
+
+### Orchestrator mode
+
+You can turn the parent session into an orchestrator — an agent that can only
+delegate. It spawns sub-agents, waits for results, and synthesizes answers.
+It cannot read files, run commands, edit code, or search the codebase itself.
+
+```bash
+PI_ORCHESTRATOR_MODE=1 pi
+```
+
+Export it in your shell rc to enable permanently:
+
+```bash
+export PI_ORCHESTRATOR_MODE=1
+```
+
+Enable that and two things change:
+
+1. **Tool restriction.** Removes read, bash, edit, write,
+   grep, find, and every other tool except subagent,
+   subagent_kill, subagent_resume. The LLMs cannot call what they cannot see.
+2. **System prompt replacement.** Pi's "expert coding assistant" prompt gets
+   replaced with one that defines the orchestrator role: decompose, delegate,
+   synthesize. The replacement preserves Pi's `APPEND_SYSTEM.md` content.
+
+Children do not inherit any of this. Each child is a separate pi process with
+its own system prompt chain — Pi default plus the child's agent body.
+`system-prompt: append` appends to Pi's default, not the orchestrator prompt.
+`system-prompt: replace` replaces Pi's default with the child's body. Neither
+sees the orchestrator identity.
+
+#### Why orchestrator mode exists
+
+Models default to doing work themselves. Given the chance, they read the file,
+write the fix, run the test. That works for single-agent tasks. For
+multi-agent workflows it defeats the purpose — you pay for two agents to race
+each other, and the parent floods its context with execution details instead
+of staying focused on coordination.
+
+Every production multi-agent framework hits this same limit. Anthropic's
+Claude Code has `COORDINATOR_MODE` with the same mechanism: restricted tool
+set, replacement system prompt, worker isolation. OpenAI Codex users file
+issues asking for a mode where the main agent "cannot execute, only
+delegate." The ADCS delegation chain spec encodes it as a scope-intersection
+invariant: each hop narrows permissions, never widens.
+
+The research calls it brain/hands separation. The orchestrator holds the
+plan. Workers hold the execution context. You keep them apart because mixing
+them makes both worse — the orchestrator loses sight of the plan when it
+starts reading files, and workers get confused about their role when they see
+orchestrator-level strategy in their context.
+
+#### When to use it
+
+Orchestrator mode shines on tasks that decompose into parallel work:
+independent research questions, multiple implementation targets, verify-after-
+write cycles. The orchestrator defines the structure, dispatches each piece
+to the right agent, reads results, and writes the next round of instructions.
+
+Simple requests do not benefit. A single sub-agent handles those faster.
 
 ## Agent definitions
 
@@ -303,6 +364,7 @@ User-facing knobs:
 
 | Variable | Use |
 | --- | --- |
+| `PI_ORCHESTRATOR_MODE` | Set `1` to turn the parent into an orchestrator (delegation-only tools, replacement system prompt) |
 | `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper command |
 | `PI_SUBAGENT_MUX` | Force `cmux`, `tmux`, `zellij`, or `wezterm` |
 | `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |
