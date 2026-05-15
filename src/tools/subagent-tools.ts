@@ -19,17 +19,23 @@ import { isSetTabTitleToolEnabled } from "../agents/titles.ts";
 import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { getSubagentToolsConfigError } from "./policy.ts";
 
+const SUBAGENT_NAME_DESCRIPTION =
+	"Required machine handle for this launch. Use lower-kebab <scope>-<role>, 2-4 words, max 32 chars, matching ^[a-z][a-z0-9]*(?:-[a-z0-9]+){1,3}$; examples: auth-scout, diff-reviewer, session-tester. Do not use Title Case, spaces, underscores, generic names, or prose.";
+
+const SUBAGENT_TITLE_DESCRIPTION =
+	"Required human title for this child session/widget. Use sentence case, 3-8 words, outcome/objective focused, and not a prompt or instruction; examples: Auth implementation map, Local diff bug review.";
+
 const SubagentChildParams = Type.Object({
-	name: Type.String({ description: "Display name for the subagent" }),
+	name: Type.String({ description: SUBAGENT_NAME_DESCRIPTION }),
 	task: Type.String({ description: "Task/prompt for the sub-agent. For non-trivial work, write readable Markdown: short paragraphs, bullets, or headings as appropriate. Use a one-line task only for trivial work." }),
-	title: Type.String({ description: "Required human title for this child session/widget. The parent agent must write it from its delegation context: sentence case, 3-15 words, outcome/objective focused, and not a prompt or instruction." }),
+	title: Type.String({ description: SUBAGENT_TITLE_DESCRIPTION }),
 	agent: Type.String({ description: "Required agent definition name. Reads .pi/agents/<name>.md or ~/.pi/agent/agents/<name>.md and refuses ad-hoc unnamed subagents." }),
 });
 
 const SubagentParams = Type.Object({
-	name: Type.Optional(Type.String({ description: "Display name for a single subagent launch" })),
-	task: Type.Optional(Type.String({ description: "Task/prompt for a single sub-agent launch. For non-trivial work, write readable Markdown: short paragraphs, bullets, or headings as appropriate. Use a one-line task only for trivial work." })),
-	title: Type.Optional(Type.String({ description: "Required human title for a single child session/widget. Sentence case, 3-15 words, outcome/objective focused, and not a prompt or instruction." })),
+	name: Type.Optional(Type.String({ description: SUBAGENT_NAME_DESCRIPTION })),
+	task: Type.Optional(Type.String({ description: "Task/prompt for a single sub-agent. For non-trivial work, write readable Markdown: short paragraphs, bullets, or headings as appropriate. Use a one-line task only for trivial work." })),
+	title: Type.Optional(Type.String({ description: SUBAGENT_TITLE_DESCRIPTION })),
 	agent: Type.Optional(Type.String({ description: "Required agent definition name for a single subagent launch." })),
 	children: Type.Optional(Type.Array(SubagentChildParams, { description: "Spawn multiple children in one deterministic launch. Use this instead of multiple separate subagent tool calls when a user asks for more than one agent." })),
 });
@@ -71,7 +77,26 @@ function getRequestedChildren(params: SubagentToolParams): SubagentParamsInput[]
 	return [params as SubagentParamsInput];
 }
 
+export function getSubagentNameError(name: string | undefined): string | null {
+	const trimmed = name?.trim();
+	if (!trimmed) {
+		return "Error: name is required for subagent launches. Provide a lower-kebab <scope>-<role> handle like auth-scout, diff-reviewer, or session-tester.";
+	}
+	if (trimmed !== name) {
+		return `Error: subagent name ${JSON.stringify(name)} has surrounding whitespace. Use lower-kebab <scope>-<role>, e.g. auth-scout.`;
+	}
+	if (trimmed.length > 32) {
+		return `Error: subagent name ${JSON.stringify(name)} is too long. Use 2-4 lower-kebab words and keep it at 32 characters or fewer.`;
+	}
+	if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+){1,3}$/.test(trimmed)) {
+		return `Error: subagent name ${JSON.stringify(name)} must be lower-kebab <scope>-<role> with 2-4 words, e.g. auth-scout, diff-reviewer, or session-tester. Do not use spaces, underscores, Title Case, or prose.`;
+	}
+	return null;
+}
+
 function getLaunchError(params: SubagentParamsInput, agentDefs: AgentDefaults | null, currentAgent: string | undefined): string | null {
+	const nameError = getSubagentNameError(params.name);
+	if (nameError) return nameError;
 	if (!params.title?.trim()) return "Error: title is required for subagent launches. Provide a short sentence-case title for the child session/widget.";
 	const agentError = getSubagentAgentRequirementError(params, agentDefs);
 	if (agentError) return agentError.content[0]?.text ?? "Agent requirement error";
@@ -150,6 +175,7 @@ export function registerSubagentCoreTools(
 			"\n" +
 			"How to call:\n" +
 			"- Use exact roster names in agent fields.\n" +
+			"- Always provide name and title. name is a machine handle: lower-kebab <scope>-<role>, 2-4 words, max 32 chars, e.g. auth-scout, diff-reviewer, session-tester. title is human prose: sentence case, 3-8 words, e.g. Auth implementation map.\n" +
 			"- If launching one helper, pass agent/name/title/task normally.\n" +
 			"- If launching multiple helpers for one user request, make one subagent call with children:[...] so all helpers start before any waiting happens.\n" +
 			"- If the user names multiple agents, include each named agent exactly once. Do not substitute one agent for another.\n" +

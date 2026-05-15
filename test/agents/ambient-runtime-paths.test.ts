@@ -14,6 +14,7 @@ import {
 	getSubagentAgentOverrideErrorForTest,
 	getSubagentAgentRequirementErrorForTest,
 	getSubagentDisplayTitleForTest,
+	getSubagentNameErrorForTest,
 	getTerminalAssistantSummaryForTest,
 	resetSubagentStateForTest,
 	resolveEffectiveSessionModeForTest,
@@ -310,7 +311,7 @@ describe("ambient agents and runtime paths", () => {
 					tool.execute(
 						"call-1",
 						{
-							name: "Review",
+							name: "worker-reviewer",
 							task: "check",
 							title: "Review worker package",
 							agent: "reviewer",
@@ -499,6 +500,23 @@ describe("ambient agents and runtime paths", () => {
 			false,
 		);
 		assert.equal(shouldReapStableTerminalSummaryForTest({}), false);
+	});
+
+	it("validates lower-kebab scope-role subagent names", () => {
+		for (const name of ["auth-scout", "diff-reviewer", "session-resume-tester", "api-v2-fixer"]) {
+			assert.equal(getSubagentNameErrorForTest(name), null);
+		}
+
+		for (const name of [
+			undefined,
+			"Auth Scout",
+			"react_components_ui",
+			"react-components-ui-extra-long-tail",
+			"this-name-is-way-too-long-for-a-subagent-handle",
+			" scout-auth",
+		]) {
+			assert.match(getSubagentNameErrorForTest(name) ?? "", /Error: subagent name|Error: name is required/);
+		}
 	});
 
 	it("builds deterministic child session titles", () => {

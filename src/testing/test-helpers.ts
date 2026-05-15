@@ -71,6 +71,7 @@ import {
 	getSubagentToolsConfigError,
 	resolveDenyTools,
 } from "../tools/policy.ts";
+import { getSubagentNameError } from "../tools/subagent-tools.ts";
 import {
 	buildSubagentSessionTitle,
 	getSubagentDisplayTitle,
@@ -129,6 +130,10 @@ export function getSubagentDisplayTitleForTest(
 	params: Pick<SubagentParamsInput, "title" | "task">,
 ) {
 	return getSubagentDisplayTitle(params);
+}
+
+export function getSubagentNameErrorForTest(name: string | undefined) {
+	return getSubagentNameError(name);
 }
 
 export function getTerminalAssistantSummaryForTest(entries: SessionEntryLike[]) {

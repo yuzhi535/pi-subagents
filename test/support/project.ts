@@ -36,6 +36,7 @@ export {
 	getAgentListSignatureForTest,
 	getSubagentChildProcessEnvForTest,
 	getSubagentDisplayTitleForTest,
+	getSubagentNameErrorForTest,
 	getSubagentToolAllowlistForTest,
 	getSubagentToolDeniedNamesForTest,
 	getSubagentToolLaunchArgsForTest,

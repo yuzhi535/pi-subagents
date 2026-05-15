@@ -334,7 +334,10 @@ The default is `terminate`.
 
 The parent session gets a live widget above the editor. It shows running children, elapsed time, activity, and context usage.
 
-Every `subagent` call requires a short `title`. The widget shows that title instead of a raw task preview.
+Every `subagent` call requires both a strict `name` and a short `title`.
+
+- `name` is the machine handle used in launch/result text and kill/wait targeting. Use lower-kebab `<scope>-<role>`, 2-4 words, max 32 characters: `auth-scout`, `diff-reviewer`, `session-tester`.
+- `title` is the human label shown in the widget/session UI. Use sentence-case prose, 3-8 words: `Auth implementation map`, `Local diff bug review`.
 
 Child sessions can also get session titles like:
 
