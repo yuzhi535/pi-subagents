@@ -12,6 +12,10 @@ import {
 	shouldMarkUserTookOver,
 } from "../auto-exit.ts";
 import { areSubagentSessionTitlesDisabled } from "../agents/titles.ts";
+import {
+	CALLER_PING_TOOL_NAME,
+	SUBAGENT_DONE_TOOL_NAME,
+} from "./tool-names.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -80,8 +84,8 @@ export function getDeniedToolNames(
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
-	if (autoExit && !denied.includes("subagent_done")) {
-		denied.push("subagent_done");
+	if (autoExit && !denied.includes(SUBAGENT_DONE_TOOL_NAME)) {
+		denied.push(SUBAGENT_DONE_TOOL_NAME);
 	}
 	return denied;
 }
@@ -104,7 +108,7 @@ export function shouldRegisterSubagentDone(
 	deniedTools: string[],
 	isInteractive = false,
 ): boolean {
-	if (deniedTools.includes("subagent_done")) return false;
+	if (deniedTools.includes(SUBAGENT_DONE_TOOL_NAME)) return false;
 	if (autoExit) return false;
 	if (isInteractive) return false;
 	return true;
@@ -339,7 +343,7 @@ export default function (pi: ExtensionAPI) {
 	// the operator is in the pane and can handle things directly.
 	if (!isInteractive || autoExit) {
 		pi.registerTool({
-			name: "caller_ping",
+			name: CALLER_PING_TOOL_NAME,
 			label: "Caller Ping",
 			description:
 				"Ask the launching chat for help, send your message there, then close this helper session. " +
@@ -373,7 +377,7 @@ export default function (pi: ExtensionAPI) {
 
 	if (shouldRegisterSubagentDone(autoExit, denied, isInteractive)) {
 		pi.registerTool({
-			name: "subagent_done",
+			name: SUBAGENT_DONE_TOOL_NAME,
 			label: "Subagent Done",
 			description:
 				"Call this tool when you have completed your task. " +

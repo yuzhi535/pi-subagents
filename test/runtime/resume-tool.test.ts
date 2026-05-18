@@ -139,6 +139,24 @@ describe("subagent_resume coordinator-only-turn", () => {
 		const meta = getSubagentBatchStopMetadataForTest();
 		assert.deepEqual(meta, {});
 	});
+
+	it("awaits an async resume when the batch was marked blocking by the classifier", async () => {
+		// Mixed-batch contract: when the message_end classifier marks the
+		// current batch blocking (async subagent_resume + non-subagent tool),
+		// the resume tool must agree with the runtime that the parent should
+		// wait. shouldAwaitSubagentLaunch is the shared predicate both the
+		// subagent and subagent_resume tools route through.
+		const { shouldAwaitSubagentLaunchForTest, markSubagentBatchBlockingForTest } =
+			await import("../support/index.ts");
+		const asyncRunning = { blocking: false, async: true };
+
+		// Without the blocking flag, an async resume should not await.
+		assert.equal(shouldAwaitSubagentLaunchForTest(asyncRunning), false);
+
+		// With the classifier-marked flag, the same async resume should await.
+		markSubagentBatchBlockingForTest();
+		assert.equal(shouldAwaitSubagentLaunchForTest(asyncRunning), true);
+	});
 });
 
 describe("subagent_resume same-session guard", () => {

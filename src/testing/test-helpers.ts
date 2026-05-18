@@ -21,6 +21,7 @@ import {
 	type PreparedSubagentLaunch,
 } from "../launch/prep.ts";
 import {
+	enforceAgentFrontmatter,
 	getSubagentAgentOverrideError,
 	getSubagentAgentRequirementError,
 	resolveSubagentBlocking,
@@ -270,6 +271,13 @@ export function resolveSubagentBlockingForTest(
 	agentDefs: AgentDefaults | null,
 ) {
 	return resolveSubagentBlocking(params, agentDefs);
+}
+
+export function enforceAgentFrontmatterForTest(
+	params: SubagentParamsInput,
+	agentDefs: AgentDefaults | null,
+) {
+	return enforceAgentFrontmatter(params, agentDefs);
 }
 
 export function resolveSubagentNoContextFilesForTest(

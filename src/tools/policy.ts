@@ -1,10 +1,8 @@
 import type { AgentDefaults } from "../agents/definitions.ts";
-
-/** Tools that are gated by `spawning: false` */
-const SPAWNING_TOOLS = new Set([
-	"subagent",
-	"subagent_resume",
-]);
+import {
+	SPAWNING_TOOL_NAMES,
+	SUBAGENT_PROTOCOL_TOOL_NAMES,
+} from "./tool-names.ts";
 
 const BUILTIN_TOOL_NAMES = new Set([
 	"read",
@@ -15,12 +13,6 @@ const BUILTIN_TOOL_NAMES = new Set([
 	"find",
 	"ls",
 ]);
-
-const SUBAGENT_PROTOCOL_TOOLS = [
-	"caller_ping",
-	"subagent_done",
-	"set_tab_title",
-];
 
 /**
  * Resolve the effective set of denied tool names from agent defaults.
@@ -33,7 +25,7 @@ export function resolveDenyTools(agentDefs: AgentDefaults | null): Set<string> {
 
 	// spawning defaults to false → deny all spawning tools unless explicitly enabled
 	if (agentDefs.spawning !== true) {
-		for (const t of SPAWNING_TOOLS) denied.add(t);
+		for (const t of SPAWNING_TOOL_NAMES) denied.add(t);
 	}
 
 	// deny-tools: explicit list
@@ -101,7 +93,7 @@ export function getSubagentToolAllowlist(
 		BUILTIN_TOOL_NAMES.has(tool),
 	);
 	if (allowlist.length === 0) return [];
-	for (const tool of SUBAGENT_PROTOCOL_TOOLS) {
+	for (const tool of SUBAGENT_PROTOCOL_TOOL_NAMES) {
 		if (!deniedTools.has(tool)) allowlist.push(tool);
 	}
 	return [...new Set(allowlist)];

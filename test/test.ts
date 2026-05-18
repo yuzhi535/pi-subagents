@@ -12,6 +12,7 @@ import "./launch/fork-session.test.ts";
 import "./runtime/wait.test.ts";
 import "./runtime/shutdown-policy.test.ts";
 import "./runtime/resume-tool.test.ts";
+import "./runtime/mixed-batch-classifier.test.ts";
 import "./launch/helpers.test.ts";
 import "./mux/mux.test.ts";
 import "./mux/zellij-placement.test.ts";

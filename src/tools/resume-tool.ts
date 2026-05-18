@@ -7,8 +7,16 @@ import {
 	resumeSubagentSession,
 	type ResumeServiceRuntime,
 } from "../runtime/resume-service.ts";
-import { requestSubagentBatchStop, getSubagentBatchStopMetadata } from "../runtime/state.ts";
-import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
+import {
+	requestSubagentBatchStop,
+	getSubagentBatchStopMetadata,
+} from "../runtime/state.ts";
+import { shouldAwaitSubagentLaunch } from "../runtime/running-registry.ts";
+import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
+import {
+	formatTaskPreview,
+	renderSubagentCompletionText,
+} from "./message-renderers.ts";
 
 export interface ResumeToolRuntime extends ResumeServiceRuntime {
 	wireSubagentSteerBack(
@@ -27,9 +35,9 @@ export function registerSubagentResumeTool(
 	shouldRegister: (name: string) => boolean,
 	runtime: ResumeToolRuntime,
 ): void {
-	if (!shouldRegister("subagent_resume")) return;
+	if (!shouldRegister(SUBAGENT_RESUME_TOOL_NAME)) return;
 	pi.registerTool({
-		name: "subagent_resume",
+		name: SUBAGENT_RESUME_TOOL_NAME,
 		label: "Resume Subagent",
 		description:
 			"Continue a previous subagent session from its session file, optionally sending a follow-up task.",
@@ -155,7 +163,7 @@ export function registerSubagentResumeTool(
 				running.completionPromise!,
 			);
 
-			const shouldAwait = running.async === false;
+			const shouldAwait = shouldAwaitSubagentLaunch(running);
 			if (shouldAwait) {
 				return runtime.getLaunchedSubagentResult(running, signal);
 			}

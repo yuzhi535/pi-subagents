@@ -69,6 +69,8 @@ import {
 	resetSubagentBatchStopRequest,
 	stopAfterCurrentSubagentBatch,
 } from "./runtime/state.ts";
+import { classifyAssistantMessageForMixedBatch } from "./runtime/batch-classifier.ts";
+import { ORCHESTRATOR_ALLOWED_TOOL_NAMES, SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
 import { registerSubagentCommands } from "./tools/commands.ts";
 import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
 import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
@@ -78,6 +80,8 @@ import { registerSubagentsView } from "./tools/subagents-view.ts";
 export { markSubagentBatchBlocking as markSubagentBatchBlockingForTest } from "./runtime/state.ts";
 export { requestSubagentBatchStop as requestSubagentBatchStopForTest } from "./runtime/state.ts";
 export { getSubagentBatchStopMetadata as getSubagentBatchStopMetadataForTest } from "./runtime/state.ts";
+export { shouldAwaitSubagentLaunch as shouldAwaitSubagentLaunchForTest } from "./runtime/running-registry.ts";
+export { classifyAssistantMessageForMixedBatch as classifyAssistantMessageForMixedBatchForTest } from "./runtime/batch-classifier.ts";
 export * from "./testing/test-helpers.ts";
 
 export function loadAgentDefaults(
@@ -159,12 +163,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	// Orchestrator mode constants (defined before use in session_start/before_agent_start)
 	const ORCHESTRATOR_MODE = process.env.PI_ORCHESTRATOR_MODE === "1";
-	const ORCHESTRATOR_ALLOWED_TOOLS = new Set([
-		"subagent",
-		"subagent_kill",
-		"subagent_resume",
-		"set_tab_title",
-	]);
+	const ORCHESTRATOR_ALLOWED_TOOLS = ORCHESTRATOR_ALLOWED_TOOL_NAMES;
 
 	// Capture the UI context early so the widget keeps a stable slot above tasks.
 	pi.on("session_start", (event, ctx) => {
@@ -182,7 +181,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			pi.setActiveTools(allowed);
 		}
 
-		if (!shouldRegister("subagent")) return;
+		if (!shouldRegister(SUBAGENT_TOOL_NAME)) return;
 
 		// Reset the cached signature on every fresh session so module-level state
 		// does not leak between sessions. The reload path still uses the cached
@@ -313,8 +312,24 @@ Your most important job is synthesis: reading sub-agent outputs, understanding t
 		return { action: "continue" as const };
 	});
 
+	pi.on("message_end", (event) => {
+		// Mixed-batch barrier: when an assistant message contains BOTH an async
+		// subagent launch (subagent or subagent_resume) AND a non-subagent tool,
+		// mark the batch blocking before any tool runs. The shared
+		// shouldAwaitSubagentLaunch predicate then routes both subagent and
+		// subagent_resume launches through the await path so the parent's
+		// next turn sees completed results instead of racing the children.
+		// Gated by PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN to share a kill
+		// switch with the existing coordinator-only-turn behavior.
+		const message = event?.message;
+		if (!message) return;
+		classifyAssistantMessageForMixedBatch(message, (agent, cwd) =>
+			agent ? loadAgentDefaults(agent, cwd) : null,
+		);
+	});
+
 	pi.on("tool_call", (event) => {
-		if (event.toolName !== "subagent") return {};
+		if (event.toolName !== SUBAGENT_TOOL_NAME) return {};
 		const input = event.input as Partial<SubagentParamsInput>;
 		const agentDefs =
 			typeof input.agent === "string"

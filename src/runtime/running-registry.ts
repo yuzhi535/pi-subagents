@@ -185,10 +185,25 @@ export async function getLaunchedSubagentResult(
 	runtime: RunningRegistryRuntime,
 	signal?: AbortSignal,
 ) {
-	const parentShouldWait = (running.blocking ?? false) || isSubagentBatchBlocking();
+	const parentShouldWait = shouldAwaitSubagentLaunch(running);
 	if (!parentShouldWait) return getStartedSubagentResult(running);
 	const result = await runtime.waitForSubagentResult({ id: running.id }, signal);
 	return runtime.withSubagentBatchStop(runtime.asSubagentToolResult(result));
+}
+
+/**
+ * Whether the parent should await this subagent launch synchronously instead
+ * of returning a started result. True when the agent is blocking
+ * (`async: false` in frontmatter or via launch param) OR when the current
+ * tool batch was marked blocking by the message_end mixed-batch classifier.
+ *
+ * Shared between the subagent and subagent_resume tools so both paths agree
+ * on the await decision and inherit the same mixed-batch sync semantics.
+ */
+export function shouldAwaitSubagentLaunch(
+	running: Pick<RunningSubagent, "blocking" | "async">,
+): boolean {
+	return (running.blocking ?? false) || isSubagentBatchBlocking();
 }
 
 export function deliverCompletedSubagentResultViaSteer(

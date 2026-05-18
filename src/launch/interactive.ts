@@ -48,6 +48,7 @@ import {
 	isSetTabTitleToolEnabled,
 } from "../agents/titles.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
+import { SET_TAB_TITLE_TOOL_NAME } from "../tools/tool-names.ts";
 
 export interface InteractiveLaunchRuntime {
 	getContextWindow(modelRef: string | undefined): number | undefined;
@@ -102,7 +103,7 @@ export async function launchInteractiveSubagent(
 		: "After writing your response, stay in this pane for operator interaction. Do not exit. The operator will close the pane when finished.";
 	const agentType = params.agent ?? params.name;
 	const tabTitleInstruction =
-		!isSetTabTitleToolEnabled() || prepared.denySet.has("set_tab_title")
+		!isSetTabTitleToolEnabled() || prepared.denySet.has(SET_TAB_TITLE_TOOL_NAME)
 			? ""
 			: `As your FIRST action, set the tab title using set_tab_title. ` +
 			`The title MUST start with [${agentType}] followed by a short description of your current task. ` +

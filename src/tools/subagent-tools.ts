@@ -18,6 +18,11 @@ import { getNoSessionSeedMode } from "../launch/seed-child-session.ts";
 import { isSetTabTitleToolEnabled } from "../agents/titles.ts";
 import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { getSubagentToolsConfigError } from "./policy.ts";
+import {
+	SET_TAB_TITLE_TOOL_NAME,
+	SUBAGENT_KILL_TOOL_NAME,
+	SUBAGENT_TOOL_NAME,
+} from "./tool-names.ts";
 
 let initialPromptLaunchActive = isInitialPromptInvocation();
 
@@ -255,8 +260,8 @@ export function registerSubagentCoreTools(
 	shouldRegister: (name: string) => boolean,
 	runtime: SubagentToolRuntime,
 ): void {
-	if (shouldRegister("subagent")) pi.registerTool({
-		name: "subagent",
+	if (shouldRegister(SUBAGENT_TOOL_NAME)) pi.registerTool({
+		name: SUBAGENT_TOOL_NAME,
 		label: "Subagent",
 		description:
 			"Launch one or more named helper agents from the subagent roster. " +
@@ -369,7 +374,7 @@ export function registerSubagentCoreTools(
 	});
 
 	pi.registerTool({
-		name: "subagent_kill", label: "Kill Subagent",
+		name: SUBAGENT_KILL_TOOL_NAME, label: "Kill Subagent",
 		description: "Stop a running subagent by id or display name. Works for both background and interactive subagents.",
 		promptSnippet: "Stop a running subagent by id or display name. Works for both background and interactive subagents.",
 		parameters: SubagentKillParams,
@@ -381,8 +386,8 @@ export function registerSubagentCoreTools(
 		},
 	});
 
-	if (isSetTabTitleToolEnabled() && shouldRegister("set_tab_title")) pi.registerTool({
-		name: "set_tab_title", label: "Set Tab Title",
+	if (isSetTabTitleToolEnabled() && shouldRegister(SET_TAB_TITLE_TOOL_NAME)) pi.registerTool({
+		name: SET_TAB_TITLE_TOOL_NAME, label: "Set Tab Title",
 		description: "Update the current tab/window and workspace/session title. Use to show progress during multi-phase workflows (e.g. setup, executing todos, reviewing). Keep titles short and informative.",
 		promptSnippet: "Update the current tab/window and workspace/session title. Use to show progress during multi-phase workflows (e.g. setup, executing todos, reviewing). Keep titles short and informative.",
 		parameters: Type.Object({ title: Type.String({ description: "New tab title (also applied to workspace/session when supported)" }) }),
