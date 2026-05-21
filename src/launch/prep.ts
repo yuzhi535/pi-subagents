@@ -228,6 +228,22 @@ export function getFlagsLaunchArgs(flags: string | undefined): string[] {
 	return parseCommandWords(flags);
 }
 
+export function parseEnvString(env: string | undefined): Record<string, string> {
+	if (!env?.trim()) return {};
+	const result: Record<string, string> = {};
+	for (const pair of env.split(",")) {
+		const trimmed = pair.trim();
+		if (!trimmed) continue;
+		const eq = trimmed.indexOf("=");
+		if (eq === -1) throw new Error(`Missing '=' in env variable: "${trimmed}"`);
+		const key = trimmed.slice(0, eq).trim();
+		if (!key) throw new Error(`Empty env key in: "${trimmed}"`);
+		const value = trimmed.slice(eq + 1).trim();
+		result[key] = value;
+	}
+	return result;
+}
+
 export function getPreparedExtensionLaunchArgs(
 	prepared: PreparedSubagentLaunch,
 	mandatoryExtensionPath: string,
@@ -352,6 +368,7 @@ export function buildPersistedSubagentLaunchMetadata(
 		boundarySystemPrompt,
 
 		...(prepared.agentDefs?.flags ? { flags: prepared.agentDefs.flags } : {}),
+		...(prepared.agentDefs?.env ? { env: prepared.agentDefs.env } : {}),
 	};
 }
 
@@ -364,6 +381,11 @@ export function getBaseSubagentEnvVars(
 	) => SubagentSessionMode,
 ): Record<string, string> {
 	const envVars: Record<string, string> = { PI_PACKAGE_DIR: "" };
+	// Merge user-configured env vars from frontmatter first,
+	// so internal PI vars below can override them if needed.
+	if (prepared.agentDefs?.env) {
+		Object.assign(envVars, parseEnvString(prepared.agentDefs.env));
+	}
 	if (prepared.runtimePaths.localAgentConfigDir) {
 		envVars.PI_CODING_AGENT_DIR = prepared.runtimePaths.localAgentConfigDir;
 	} else if (process.env.PI_CODING_AGENT_DIR) {

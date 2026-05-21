@@ -6,6 +6,7 @@ import { getArtifactStorageRoot } from "../artifact-storage.ts";
 import { getPiInvocation, getPiShellParts, getSubagentChildProcessEnv } from "../launch/child-command.ts";
 import {
 	getExtensionLaunchArgs,
+	parseEnvString,
 	getPersistedPromptLaunchArgs,
 	getPersistedSessionParityArgs,
 } from "../launch/prep.ts";
@@ -121,6 +122,11 @@ export async function resumeSubagentSession(
 	const resumedAgent = launchMetadata?.agent ?? metadata.agent ?? input.agent;
 
 	const resumeEnvVars: Record<string, string> = {};
+	// Restore user-configured env vars from the original launch FIRST,
+	// so internal PI vars below can override them if needed.
+	if (launchMetadata?.env) {
+		Object.assign(resumeEnvVars, parseEnvString(launchMetadata.env));
+	}
 	if (launchMetadata?.agentConfigDir) {
 		resumeEnvVars.PI_CODING_AGENT_DIR = launchMetadata.agentConfigDir;
 	} else if (process.env.PI_CODING_AGENT_DIR) {

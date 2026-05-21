@@ -140,6 +140,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `system-prompt` | task body | `append` uses `--append-system-prompt`; `replace` uses `--system-prompt` |
 | `session-mode` | `lineage-only` | `standalone`, `lineage-only`, or `fork` |
 | `flags` | unset | Extra CLI flags passed to the child pi process (e.g. `--verbose` or `--some-custom-flag`). Appended after all generated args — last-wins semantics against conflicting generated args. Useful for extension-registered flags or pi built-in flags not covered by other frontmatter fields. |
+| `env` | unset | Comma-separated `KEY=VALUE` pairs passed as environment variables to the child process. Example: `FOO=bar,BAZ=qux`. Merged before internal PI vars so PI\_SUBAGENT\_\* vars and other internal vars take precedence if names conflict. Useful for configuring extensions that read env vars, or setting child-specific context without affecting the parent shell. |
 | `spawning` | `false` | Allow the child to launch subagents |
 | `async` | `true` | `false` makes the launch sync |
 | `mode` | `interactive` | `interactive` pane or `background` process |

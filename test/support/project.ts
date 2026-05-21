@@ -24,6 +24,7 @@ export {
 	getEffectiveAgentDefinitionsForTest,
 	getExtensionLaunchArgsForTest,
 	getFlagsLaunchArgs,
+	parseEnvStringForTest,
 	getLaunchedSubagentResultForTest,
 	getNoSessionSeedModeForTest,
 	getPiInvocationForTest,

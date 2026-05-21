@@ -54,6 +54,7 @@ export interface PersistedSubagentLaunchMetadata {
 	boundarySystemPrompt: boolean;
 
 	flags?: string;
+	env?: string;
 }
 
 const SUBAGENT_LAUNCH_METADATA_CUSTOM_TYPE =

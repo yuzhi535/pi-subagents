@@ -28,6 +28,7 @@ export interface AgentDefaults {
 	timeout?: number;
 
 	flags?: string;
+	env?: string;
 	parentClosePolicy?: "terminate" | "continue";
 }
 
@@ -126,6 +127,7 @@ function parseAgentDefinition(
 		timeout: timeoutRaw != null ? parseInt(timeoutRaw, 10) : undefined,
 
 		flags: flagsRaw,
+		env: get("env"),
 		parentClosePolicy:
 			parentClosePolicyRaw === "terminate" ||
 			parentClosePolicyRaw === "continue"

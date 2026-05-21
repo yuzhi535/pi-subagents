@@ -29,7 +29,7 @@ const SECTION_FIELDS = [
 	},
 	{
 		title: "Workspace",
-		fields: ["cwd", "flags"],
+		fields: ["cwd", "flags", "env"],
 	},
 	{
 		title: "Capabilities",
@@ -66,6 +66,7 @@ function buildSections(
 	fields.push({ label: "mode", value: meta?.mode ?? defs?.mode ?? "interactive" });
 	fields.push({ label: "cwd", value: meta?.cwd ?? defs?.cwd ?? "parent cwd" });
 	fields.push({ label: "flags", value: none(meta?.flags ?? defs?.flags) });
+	fields.push({ label: "env", value: none(meta?.env ?? defs?.env) });
 	fields.push({ label: "tools", value: meta?.tools ?? defs?.tools ?? "all" });
 	fields.push({ label: "deny-tools", value: none(defs?.denyTools) });
 	fields.push({

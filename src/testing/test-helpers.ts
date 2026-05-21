@@ -16,6 +16,7 @@ import {
 	getBaseSubagentEnvVars,
 	getExtensionLaunchArgs,
 	getPreparedSessionLaunchArgs,
+	parseEnvString,
 	type PreparedSubagentLaunch,
 } from "../launch/prep.ts";
 import {
@@ -317,6 +318,10 @@ export function getExtensionLaunchArgsForTest(
 export function getFlagsLaunchArgs(flags: string | undefined) {
 	if (!flags?.trim()) return [];
 	return parseCommandWords(flags);
+}
+
+export function parseEnvStringForTest(env: string | undefined) {
+	return parseEnvString(env);
 }
 
 export function getPreparedSessionLaunchArgsForTest(

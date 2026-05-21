@@ -20,7 +20,7 @@ import {
 	loadAgentDefaults,
 	readSubagentLaunchMetadataForTest,
 	resetSubagentStateForTest,
-
+	parseEnvStringForTest,
 	resolveResumeLaunchMetadataForTest,
 	resolveSubagentBlockingForTest,
 	resolveSubagentNoContextFilesForTest,
@@ -599,4 +599,88 @@ describe("agent launch configuration", () => {
 		);
 	});
 
+});
+describe("env frontmatter field", () => {
+	afterEach(() => {
+		resetSubagentStateForTest();
+	});
+
+	it("parses KEY=VALUE pairs from an env string", () => {
+		assert.deepEqual(parseEnvStringForTest("FOO=bar,BAZ=qux"), { FOO: "bar", BAZ: "qux" });
+		assert.deepEqual(parseEnvStringForTest("FOO=bar, BAZ=qux"), { FOO: "bar", BAZ: "qux" });
+		assert.deepEqual(parseEnvStringForTest(undefined), {});
+		assert.deepEqual(parseEnvStringForTest(""), {});
+		assert.deepEqual(parseEnvStringForTest("  "), {});
+	});
+
+	it("rejects malformed env key=value pairs", () => {
+		assert.throws(() => parseEnvStringForTest("=bar"), /Empty env key/);
+		assert.throws(() => parseEnvStringForTest("FOO"), /Missing '='/);
+	});
+
+	it("parses env from agent frontmatter", () => {
+		const dir = createTestDir();
+		const configDir = join(dir, "config");
+		mkdirSync(join(configDir, "agents"), { recursive: true });
+		writeFileSync(
+			join(configDir, "agents", "explorer.md"),
+			`---\nname: explorer\nenv: FOO=bar,BAZ=qux\n---\n\nExplorer body.`,
+		);
+		process.env.PI_CODING_AGENT_DIR = configDir;
+
+		const defs = loadAgentDefaults("explorer");
+		assert.equal(defs?.env, "FOO=bar,BAZ=qux");
+
+		process.env.PI_CODING_AGENT_DIR = "/tmp";
+	});
+
+	it("merges env vars into base subagent env vars", () => {
+		const env = getBaseSubagentEnvVarsForTest({
+			env: "FOO=bar,BAZ=qux",
+		});
+		assert.equal(env["FOO"], "bar");
+		assert.equal(env["BAZ"], "qux");
+		// Internal vars still present
+		assert.equal(typeof env.PI_SUBAGENT_NAME, "string");
+		assert.equal(env.PI_PACKAGE_DIR, "");
+	});
+
+	it("returns empty env record when no env field is set", () => {
+		const env = getBaseSubagentEnvVarsForTest(null);
+		assert.equal(env["FOO"], undefined);
+	});
+
+
+	it("persists env in launch metadata", async () => {
+		const dir = createTestDir();
+		const child = join(dir, "child.jsonl");
+		await writeSubagentLaunchMetadataEntryForTest(child, {
+			version: 1,
+			timestamp: "2026-05-08T00:00:00.000Z",
+			name: "env-child",
+			mode: "background",
+			sessionMode: "lineage-only",
+			parentClosePolicy: "terminate",
+			blocking: false,
+			async: true,
+			denyTools: [],
+			noContextFiles: false,
+			noSession: false,
+			agentConfigDir: dir,
+			cwd: dir,
+			boundarySystemPrompt: true,
+			env: "FOO=bar,BAZ=qux",
+		});
+		const metadata = readSubagentLaunchMetadataForTest(child);
+		assert.equal(metadata?.env, "FOO=bar,BAZ=qux");
+	});
+
+	it("does not let user env override internal PI_SUBAGENT_NAME", () => {
+		const env = getBaseSubagentEnvVarsForTest({
+			env: "PI_SUBAGENT_NAME=evil",
+		});
+		// Internal vars override user-configured env
+		assert.notEqual(env.PI_SUBAGENT_NAME, "evil");
+		assert.equal(typeof env.PI_SUBAGENT_NAME, "string");
+	});
 });
