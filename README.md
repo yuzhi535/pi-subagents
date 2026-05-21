@@ -139,8 +139,6 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `auto-exit` | `false` | Close the child after a normal completion |
 | `system-prompt` | task body | `append` uses `--append-system-prompt`; `replace` uses `--system-prompt` |
 | `session-mode` | `lineage-only` | `standalone`, `lineage-only`, or `fork` |
-
-
 | `flags` | unset | Extra CLI flags passed to the child pi process (e.g. `--verbose` or `--some-custom-flag`). Appended after all generated args — last-wins semantics against conflicting generated args. Useful for extension-registered flags or pi built-in flags not covered by other frontmatter fields. |
 | `spawning` | `false` | Allow the child to launch subagents |
 | `async` | `true` | `false` makes the launch sync |
