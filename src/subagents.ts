@@ -165,9 +165,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	// Orchestrator mode constants (defined before use in session_start/before_agent_start)
 	const ORCHESTRATOR_MODE = process.env.PI_ORCHESTRATOR_MODE === "1";
 	const ORCHESTRATOR_ALLOWED_TOOLS = ORCHESTRATOR_ALLOWED_TOOL_NAMES;
+	let latestContext: ExtensionContext | undefined;
 
 	// Capture the UI context early so the widget keeps a stable slot above tasks.
 	pi.on("session_start", (event, ctx) => {
+		latestContext = ctx;
 		resetSubagentBatchStopRequest();
 		applySubagentLineage(ctx);
 		applySubagentSessionTitle(ctx);
@@ -417,6 +419,9 @@ Your most important job is synthesis: reading sub-agent outputs, understanding t
 		startWidgetRefresh,
 		getLaunchedSubagentResult,
 		runningSubagents,
+		modelRegistry: {
+			getAvailable: () => latestContext?.modelRegistry.getAvailable() ?? [],
+		},
 	});
 
 	registerSubagentCommands(pi, {

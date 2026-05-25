@@ -7,9 +7,8 @@ import {
 	getSubagentAgentRequirementError,
 
 	resolveSubagentBlocking,
-	resolveSubagentNoSession,
 } from "../launch/policy.ts";
-import { normalizeModelRef, type SubagentLaunchContext } from "../launch/prep.ts";
+import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { isMuxAvailable, renameCurrentTab, renameWorkspace } from "../mux.ts";
 import { findRunningSubagent } from "../runtime/running-registry.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
@@ -37,6 +36,7 @@ const SubagentChildParams = Type.Object({
 	task: Type.String({ description: "Task/prompt for the sub-agent. For non-trivial work, write readable Markdown: short paragraphs, bullets, or headings as appropriate. Use a one-line task only for trivial work." }),
 	title: Type.String({ description: SUBAGENT_TITLE_DESCRIPTION }),
 	agent: Type.String({ description: "Required agent definition name. Reads .pi/agents/<name>.md or ~/.pi/agent/agents/<name>.md and refuses ad-hoc unnamed subagents." }),
+	model: Type.Optional(Type.String({ description: "Optional provider/model[:thinking] override. Ignored unless the agent definition sets allow-model-override: true." })),
 });
 
 const SubagentParams = Type.Object({
@@ -44,6 +44,7 @@ const SubagentParams = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task/prompt for a single sub-agent. For non-trivial work, write readable Markdown: short paragraphs, bullets, or headings as appropriate. Use a one-line task only for trivial work." })),
 	title: Type.Optional(Type.String({ description: SUBAGENT_TITLE_DESCRIPTION })),
 	agent: Type.Optional(Type.String({ description: "Required agent definition name for a single subagent launch." })),
+	model: Type.Optional(Type.String({ description: "Optional provider/model[:thinking] override. Ignored unless the agent definition sets allow-model-override: true." })),
 	children: Type.Optional(Type.Array(SubagentChildParams, { description: "Spawn multiple children in one deterministic launch. Use this instead of multiple separate subagent tool calls when a user asks for more than one agent." })),
 });
 const SubagentKillParams = Type.Object({ id: Type.String({ description: "Running subagent id or display name to stop" }) });
@@ -123,18 +124,10 @@ async function launchOneSubagent(
 	}
 	const isBackground = effectiveParams.background ?? agentDefs?.mode === "background";
 
-	// Inherit parent model/thinking when agent frontmatter doesn't define them.
-	// This mirrors the same fallback in prepareSubagentLaunch so that
-	// childModelRef is used for the child command's --model flag.
-
 	const parentModelRef = ctx.model
 		? `${ctx.model.provider}/${ctx.model.id}`
 		: undefined;
 	const parentThinking = pi.getThinkingLevel() as string;
-	const { effectiveModelRef: childModelRef } = normalizeModelRef(
-		agentDefs?.model ?? parentModelRef,
-		agentDefs?.thinking ?? parentThinking,
-	);
 
 	const launchCtx: SubagentLaunchContext = {
 		sessionManager: ctx.sessionManager,
@@ -142,6 +135,7 @@ async function launchOneSubagent(
 
 		launchToolCallId: toolCallId,
 		autoExit: headlessAutoExit,
+		modelRegistry: ctx.modelRegistry,
 		parentModelRef,
 		parentThinking,
 	};
@@ -247,7 +241,7 @@ export function registerSubagentCoreTools(
 		description:
 			"Launch one or more named helper agents from the subagent roster. " +
 			"Agent definitions control model, tools, context, UI mode, wait behavior, and completion lifecycle; " +
-			"this call only chooses the agent name(s) and task(s).",
+			"this call chooses the agent name(s), task(s), and optional model overrides only when definitions opt in.",
 		promptSnippet:
 			"Subagents are separate helper processes you can launch to do work outside this chat turn.\n" +
 			"\n" +

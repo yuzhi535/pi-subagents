@@ -13,12 +13,17 @@ import {
 	parseCommandWords,
 } from "../launch/child-command.ts";
 import {
+	buildPersistedSubagentLaunchMetadata,
 	getBaseSubagentEnvVars,
 	getExtensionLaunchArgs,
+	getPersistedSessionParityArgs,
 	getPreparedSessionLaunchArgs,
 	parseEnvString,
+	resolveAvailableModelRef,
+	splitModelRefThinking,
 	type PreparedSubagentLaunch,
 } from "../launch/prep.ts";
+import { resolveResumeLaunchMetadataForInvocation } from "../runtime/resume-service.ts";
 import {
 	enforceAgentFrontmatter,
 	getSubagentAgentOverrideError,
@@ -207,6 +212,65 @@ export async function writeSubagentLaunchMetadataEntryForTest(
 
 export function readSubagentLaunchMetadataForTest(path: string) {
 	return readSubagentLaunchMetadata(path);
+}
+
+export function buildPersistedSubagentLaunchMetadataForTest(
+	prepared: PreparedSubagentLaunch,
+	params: SubagentParamsInput,
+	mode: ResumeMode,
+	sessionMode: SubagentSessionMode,
+	boundarySystemPrompt: boolean,
+	systemPrompt?: string,
+) {
+	return buildPersistedSubagentLaunchMetadata(
+		prepared,
+		params,
+		mode,
+		sessionMode,
+		boundarySystemPrompt,
+		systemPrompt,
+	);
+}
+
+export function getPersistedSessionParityArgsForTest(
+	metadata: PersistedSubagentLaunchMetadata | undefined,
+) {
+	return getPersistedSessionParityArgs(metadata);
+}
+
+export function resolveResumeLaunchMetadataForInvocationForTest(
+	metadata: PersistedSubagentLaunchMetadata | undefined,
+	requestedModel: string | undefined,
+) {
+	return resolveResumeLaunchMetadataForInvocation(metadata, requestedModel);
+}
+
+export function splitModelRefThinkingForTest(
+	model: string | undefined,
+	fallbackThinking: string | undefined,
+) {
+	return splitModelRefThinking(model, fallbackThinking);
+}
+
+export function resolveAvailableModelRefForTest(
+	model: string | undefined,
+	thinking: string | undefined,
+	explicitThinking: boolean,
+	parentModelRef?: string,
+) {
+	return resolveAvailableModelRef(
+		model,
+		thinking,
+		explicitThinking,
+		{
+			getAvailable: () => [
+				{ provider: "zai-messages", id: "glm-5-turbo", thinkingLevelMap: { low: "low" } },
+				{ provider: "zai-messages", id: "glm-5.1", thinkingLevelMap: { high: "high" } },
+				{ provider: "other", id: "glm-5.1", thinkingLevelMap: { high: "high" } },
+			],
+		},
+		parentModelRef,
+	);
 }
 
 export function resolveEffectiveSessionModeForTest(

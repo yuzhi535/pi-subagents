@@ -6,6 +6,7 @@ import {
 	afterEach,
 	describe,
 	it,
+	buildPersistedSubagentLaunchMetadataForTest,
 	buildResumePiArgsForTest,
 	buildShellChangeDirectoryPrefixForTest,
 	buildSkillLaunchPlanForTest,
@@ -14,6 +15,7 @@ import {
 	getNoSessionSeedModeForTest,
 	getPiInvocationForTest,
 	getPiShellPartsForTest,
+	getPersistedSessionParityArgsForTest,
 	getPreparedSessionLaunchArgsForTest,
 	getResumeCwdForTest,
 	getSubagentChildProcessEnvForTest,
@@ -21,6 +23,8 @@ import {
 	readSubagentLaunchMetadataForTest,
 	resetSubagentStateForTest,
 	parseEnvStringForTest,
+	resolveAvailableModelRefForTest,
+	resolveResumeLaunchMetadataForInvocationForTest,
 	resolveResumeLaunchMetadataForTest,
 	resolveSubagentBlockingForTest,
 	resolveSubagentNoContextFilesForTest,
@@ -29,6 +33,7 @@ import {
 	getEntries,
 	createTestDir,
 	createSessionFile,
+	enforceAgentFrontmatterForTest,
 	getAgentConfigDirForTest,
 	isInitialPromptInvocationForTest,
 	isOneShotPromptInvocationForTest,
@@ -43,6 +48,126 @@ describe("agent launch configuration", () => {
 	it("uses PI_CODING_AGENT_DIR for the global agent config root", () => {
 		process.env.PI_CODING_AGENT_DIR = "/tmp/custom-agent-root";
 		assert.equal(getAgentConfigDirForTest(), "/tmp/custom-agent-root");
+	});
+
+	it("parses allow-model-override frontmatter", () => {
+		const dir = createTestDir();
+		mkdirSync(join(dir, ".pi", "agents"), { recursive: true });
+		writeFileSync(
+			join(dir, ".pi", "agents", "reviewer.md"),
+			"---\nname: reviewer\nmodel: provider/default\nallow-model-override: true\n---\nReview things.",
+		);
+
+		const defs = loadAgentDefaults("reviewer", undefined, dir);
+		assert.equal(defs?.allowModelOverride, true);
+	});
+
+	it("ignores launch model unless agent opts into model override", () => {
+		const params = {
+			name: "code-review",
+			task: "review",
+			title: "Code review",
+			agent: "reviewer",
+			model: "provider/requested:high",
+		};
+
+		assert.equal(
+			enforceAgentFrontmatterForTest(params, { model: "provider/default" }).model,
+			undefined,
+		);
+		assert.equal(
+			enforceAgentFrontmatterForTest(params, {
+				model: "provider/default",
+				allowModelOverride: true,
+			}).model,
+			"provider/requested:high",
+		);
+	});
+
+	it("persists effective launch model override metadata", () => {
+		const metadata = buildPersistedSubagentLaunchMetadataForTest(
+			{
+				agentDefs: { allowModelOverride: true },
+				effectiveModel: "provider/requested",
+				effectiveThinking: "high",
+				effectiveModelRef: "provider/requested:high",
+				runtimePaths: { effectiveAgentConfigDir: "/tmp", targetCwdForSession: "/tmp" },
+				denySet: new Set(),
+				identity: "reviewer",
+				identityInSystemPrompt: false,
+			} as never,
+			{
+				name: "code-review",
+				task: "review",
+				title: "Code review",
+				agent: "reviewer",
+				model: "provider/requested:high",
+			},
+			"background",
+			"lineage-only",
+			true,
+		);
+
+		assert.equal(metadata.allowModelOverride, true);
+		assert.equal(metadata.modelSource, "launch-override");
+		assert.equal(metadata.requestedModelOverride, "provider/requested:high");
+		assert.equal(metadata.modelRef, "provider/requested:high");
+	});
+
+	it("resolves resume model override only when launch metadata allowed it", async () => {
+		const base = {
+			version: 1 as const,
+			timestamp: "2026-05-08T00:00:00.000Z",
+			name: "code-review",
+			mode: "background" as const,
+			sessionMode: "lineage-only" as const,
+			parentClosePolicy: "continue" as const,
+			async: true,
+			model: "provider/default",
+			thinking: "low",
+			modelRef: "provider/default:low",
+			denyTools: [],
+			noContextFiles: false,
+			noSession: false,
+			agentConfigDir: "/tmp",
+			cwd: "/tmp",
+			boundarySystemPrompt: true,
+		};
+
+		const ignored = resolveResumeLaunchMetadataForInvocationForTest(
+			{ ...base, allowModelOverride: false },
+			"provider/requested:high",
+		);
+		assert.equal(ignored?.modelRef, "provider/default:low");
+		assert.equal(ignored?.ignoredModelOverride, "provider/requested:high");
+
+		const overridden = resolveResumeLaunchMetadataForInvocationForTest(
+			{ ...base, allowModelOverride: true },
+			"provider/requested:high",
+		);
+		assert.equal(overridden?.modelRef, "provider/requested:high");
+		assert.equal(overridden?.modelSource, "resume-override");
+
+		assert.deepEqual(await getPersistedSessionParityArgsForTest(overridden), [
+			"--model",
+			"provider/requested:high",
+		]);
+	});
+
+	it("validates model override names and drops unsupported inherited thinking", () => {
+		assert.deepEqual(
+			resolveAvailableModelRefForTest("glm-5.1", "low", false, "zai-messages/glm-5-turbo"),
+			{ model: "zai-messages/glm-5.1", thinking: undefined },
+		);
+
+		assert.throws(
+			() => resolveAvailableModelRefForTest("zai-messages/glm-5-turbo", "high", true),
+			/does not support thinking level 'high'/,
+		);
+		assert.throws(
+			() => resolveAvailableModelRefForTest("missing-model", undefined, false),
+			/Unknown model override 'missing-model'/,
+		);
 	});
 
 	it("forces synchronous child launches for one-shot and startup-prompt parent invocations", () => {

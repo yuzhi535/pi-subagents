@@ -70,6 +70,12 @@ export function registerSubagentResumeTool(
 						"Agent name for display. Use the original agent name from the session being resumed.",
 				}),
 			),
+			model: Type.Optional(
+				Type.String({
+					description:
+						"Optional provider/model[:thinking] override. Ignored unless the original launch metadata allowed model override.",
+				}),
+			),
 			mode: Type.Optional(
 				Type.Union(
 					[
@@ -153,6 +159,7 @@ export function registerSubagentResumeTool(
 					name: params.name,
 					agent: params.agent,
 					mode: params.mode as "interactive" | "background" | undefined,
+					model: params.model,
 				},
 				runtime,
 			);

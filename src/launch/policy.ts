@@ -38,9 +38,9 @@ export function getSubagentAgentOverrideError(
 	_params: Partial<SubagentParamsInput>,
 	_agentDefs: AgentDefaults | null,
 ) {
-	// Named-agent frontmatter is authoritative. Call-time fields such as model,
-	// tools, cwd, and background are ignored by enforceAgentFrontmatter instead
-	// of rejected; this keeps the runtime consistent with the public tool schema.
+	// Named-agent frontmatter is authoritative by default. Call-time model is
+	// allowed only when the definition opts in with allow-model-override: true;
+	// other call-time runtime fields are ignored instead of rejected.
 	return null;
 }
 
@@ -127,6 +127,9 @@ export function enforceAgentFrontmatter(
 		task: params.task,
 		title: params.title,
 		agent: params.agent,
+		...(agentDefs?.allowModelOverride === true && params.model
+			? { model: params.model }
+			: {}),
 		async: resolveSubagentAsync(params, agentDefs),
 		blocking: resolveSubagentBlocking(params, agentDefs),
 	};

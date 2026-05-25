@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 export interface AgentDefaults {
 	enabled?: boolean;
 	model?: string;
+	allowModelOverride?: boolean;
 	tools?: string;
 	skills?: string;
 	injectSkills?: string;
@@ -43,14 +44,6 @@ export function getAgentConfigDir(): string {
 	return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 }
 
-function parseOptionalNonNegativeInteger(
-	raw: string | undefined,
-): number | undefined {
-	if (raw == null) return undefined;
-	const value = Number(raw);
-	return Number.isInteger(value) && value >= 0 ? value : undefined;
-}
-
 function parseAgentDefinition(
 	path: string,
 	source: "project" | "global",
@@ -68,6 +61,7 @@ function parseAgentDefinition(
 	if (enabledRaw === "false") return null;
 	const spawningRaw = get("spawning");
 	const autoExitRaw = get("auto-exit");
+	const allowModelOverrideRaw = get("allow-model-override");
 	const modeRaw = get("mode");
 	const sessionModeRaw = get("session-mode");
 	const forkRaw = get("fork");
@@ -91,6 +85,10 @@ function parseAgentDefinition(
 		path,
 		enabled: enabledRaw != null ? enabledRaw === "true" : undefined,
 		model: get("model"),
+		allowModelOverride:
+			allowModelOverrideRaw != null
+				? allowModelOverrideRaw === "true"
+				: undefined,
 		tools: get("tools"),
 		skills: get("skills"),
 		injectSkills: injectSkillsRaw,

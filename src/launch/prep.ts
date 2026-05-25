@@ -26,12 +26,21 @@ import { buildSubagentSessionTitle } from "../agents/titles.ts";
 import { addToolModeDeniedNames, getSubagentToolLaunchArgs, resolveDenyTools } from "../tools/policy.ts";
 import { buildSkillLaunchPlan, formatInjectedSkills, type SkillLaunchPlan } from "./skills.ts";
 
+export interface ModelRegistryLike {
+	getAvailable(): Array<{
+		provider: string;
+		id: string;
+		thinkingLevelMap?: Record<string, string | null | undefined>;
+	}>;
+}
+
 export interface SubagentLaunchContext {
 	sessionManager: {
 		getSessionFile(): string | null | undefined;
 		getSessionId(): string;
 	};
 	cwd: string;
+	modelRegistry?: ModelRegistryLike;
 
 	launchToolCallId?: string;
 	/** Override for auto-exit (used in headless mode to force auto-exit on). */
@@ -109,6 +118,68 @@ export function normalizeModelRef(
 	return { effectiveModel: baseModel, effectiveThinking: thinking, effectiveModelRef: ref };
 }
 
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+export function splitModelRefThinking(
+	model: string | undefined,
+	fallbackThinking: string | undefined,
+): { model: string | undefined; thinking: string | undefined; explicitThinking: boolean } {
+	if (!model) return { model, thinking: fallbackThinking, explicitThinking: false };
+	const idx = model.lastIndexOf(":");
+	if (idx === -1) return { model, thinking: fallbackThinking, explicitThinking: false };
+	const suffix = model.slice(idx + 1);
+	if (!THINKING_LEVELS.has(suffix)) return { model, thinking: fallbackThinking, explicitThinking: false };
+	return { model: model.slice(0, idx), thinking: suffix, explicitThinking: true };
+}
+
+export function resolveAvailableModelRef(
+	model: string | undefined,
+	thinking: string | undefined,
+	explicitThinking: boolean,
+	modelRegistry: ModelRegistryLike | undefined,
+	parentModelRef?: string,
+): { model: string | undefined; thinking: string | undefined } {
+	if (!model || !modelRegistry) return { model, thinking };
+	const available = modelRegistry.getAvailable();
+	if (available.length === 0) return { model, thinking };
+	const [parentProvider] = parentModelRef?.split("/") ?? [];
+	let resolved = model;
+	let provider: string | undefined;
+	let id: string;
+	const slash = model.indexOf("/");
+	if (slash === -1) {
+		id = model;
+		const matches = available.filter((candidate) => candidate.id === id);
+		if (matches.length === 1) {
+			provider = matches[0]?.provider;
+			resolved = `${provider}/${id}`;
+		} else if (matches.length > 1 && parentProvider) {
+			const parentProviderMatch = matches.find((candidate) => candidate.provider === parentProvider);
+			if (parentProviderMatch) {
+				provider = parentProviderMatch.provider;
+				resolved = `${provider}/${id}`;
+			} else {
+				throw new Error(`Ambiguous model override '${model}'. Use provider/model.`);
+			}
+		} else if (matches.length > 1) {
+			throw new Error(`Ambiguous model override '${model}'. Use provider/model.`);
+		} else {
+			throw new Error(`Unknown model override '${model}'.`);
+		}
+	} else {
+		provider = model.slice(0, slash);
+		id = model.slice(slash + 1);
+		const match = available.find((candidate) => candidate.provider === provider && candidate.id === id);
+		if (!match) throw new Error(`Unknown model override '${model}'.`);
+	}
+	const match = available.find((candidate) => `${candidate.provider}/${candidate.id}` === resolved);
+	if (thinking && match?.thinkingLevelMap && !(thinking in match.thinkingLevelMap)) {
+		if (!explicitThinking) return { model: resolved, thinking: undefined };
+		throw new Error(`Model '${resolved}' does not support thinking level '${thinking}'.`);
+	}
+	return { model: resolved, thinking };
+}
+
 export async function prepareSubagentLaunch(
 	params: SubagentParamsInput,
 	ctx: SubagentLaunchContext,
@@ -124,9 +195,20 @@ export async function prepareSubagentLaunch(
 	if (ctx.autoExit !== undefined && agentDefs) {
 		agentDefs.autoExit = ctx.autoExit;
 	}
+	const requestedModel = params.model ?? agentDefs?.model ?? ctx.parentModelRef;
+	const requested = splitModelRefThinking(requestedModel, agentDefs?.thinking ?? ctx.parentThinking);
+	const availableRequested = params.model
+		? resolveAvailableModelRef(
+			requested.model,
+			requested.thinking,
+			requested.explicitThinking,
+			ctx.modelRegistry,
+			ctx.parentModelRef,
+		)
+		: requested;
 	const { effectiveModel, effectiveThinking, effectiveModelRef } = normalizeModelRef(
-		params.model ?? agentDefs?.model ?? ctx.parentModelRef,
-		agentDefs?.thinking ?? ctx.parentThinking,
+		availableRequested.model,
+		availableRequested.thinking,
 	);
 	const effectiveTools = params.tools ?? agentDefs?.tools;
 	const effectiveSkills = params.skills ?? agentDefs?.skills;
@@ -326,6 +408,14 @@ export function buildPersistedSubagentLaunchMetadata(
 	boundarySystemPrompt: boolean,
 	systemPrompt?: string,
 ): PersistedSubagentLaunchMetadata {
+	const allowModelOverride = prepared.agentDefs?.allowModelOverride === true;
+	const modelSource = params.model
+		? "launch-override"
+		: prepared.agentDefs?.model
+			? "agent"
+			: prepared.effectiveModel
+				? "parent"
+				: undefined;
 
 	return {
 		version: 1,
@@ -348,6 +438,9 @@ export function buildPersistedSubagentLaunchMetadata(
 		...(prepared.effectiveModelRef
 			? { modelRef: prepared.effectiveModelRef }
 			: {}),
+		allowModelOverride,
+		...(modelSource ? { modelSource } : {}),
+		...(params.model ? { requestedModelOverride: params.model } : {}),
 		...(prepared.effectiveTools ? { tools: prepared.effectiveTools } : {}),
 		...(prepared.effectiveSkills ? { skills: prepared.effectiveSkills } : {}),
 		...(prepared.effectiveInjectSkills

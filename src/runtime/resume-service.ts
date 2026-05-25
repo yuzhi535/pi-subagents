@@ -9,6 +9,8 @@ import {
 	parseEnvString,
 	getPersistedPromptLaunchArgs,
 	getPersistedSessionParityArgs,
+	normalizeModelRef,
+	resolveAvailableModelRef,
 } from "../launch/prep.ts";
 import {
 	buildResumePiArgs,
@@ -24,6 +26,8 @@ import {
 	isResumeMode,
 	readSubagentExtensionEntry,
 	readSubagentLaunchMetadata,
+	writeSubagentLaunchMetadataEntry,
+	type PersistedSubagentLaunchMetadata,
 } from "../session/session-files.ts";
 import type { RunningSubagent, SubagentResult } from "../types.ts";
 
@@ -45,6 +49,13 @@ export interface ResumeServiceRuntime {
 	): AbortSignal;
 	startWidgetRefresh(): void;
 	runningSubagents: Map<string, RunningSubagent>;
+	modelRegistry?: {
+		getAvailable(): Array<{
+			provider: string;
+			id: string;
+			thinkingLevelMap?: Record<string, string | null | undefined>;
+		}>;
+	};
 }
 
 export interface ResumeSessionInput {
@@ -53,6 +64,52 @@ export interface ResumeSessionInput {
 	name?: string;
 	agent?: string;
 	mode?: "interactive" | "background";
+	model?: string;
+}
+
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+function splitResumeModelRef(
+	model: string,
+	fallbackThinking: string | undefined,
+): { model: string; thinking: string | undefined; explicitThinking: boolean } {
+	const idx = model.lastIndexOf(":");
+	if (idx === -1) return { model, thinking: fallbackThinking, explicitThinking: false };
+	const suffix = model.slice(idx + 1);
+	if (!THINKING_LEVELS.has(suffix)) return { model, thinking: fallbackThinking, explicitThinking: false };
+	return { model: model.slice(0, idx), thinking: suffix, explicitThinking: true };
+}
+
+export function resolveResumeLaunchMetadataForInvocation(
+	launchMetadata: PersistedSubagentLaunchMetadata | undefined,
+	requestedModel: string | undefined,
+	modelRegistry?: ResumeServiceRuntime["modelRegistry"],
+): PersistedSubagentLaunchMetadata | undefined {
+	if (!launchMetadata || !requestedModel) return launchMetadata;
+	if (launchMetadata.allowModelOverride !== true) {
+		return { ...launchMetadata, ignoredModelOverride: requestedModel };
+	}
+	const requested = splitResumeModelRef(requestedModel, launchMetadata.thinking);
+	const resolved = resolveAvailableModelRef(
+		requested.model,
+		requested.thinking,
+		requested.explicitThinking,
+		modelRegistry,
+		launchMetadata.modelRef,
+	);
+	const { effectiveModel, effectiveThinking, effectiveModelRef } = normalizeModelRef(
+		resolved.model,
+		resolved.thinking,
+	);
+	return {
+		...launchMetadata,
+		timestamp: new Date().toISOString(),
+		...(effectiveModel ? { model: effectiveModel } : {}),
+		...(effectiveThinking ? { thinking: effectiveThinking } : {}),
+		...(effectiveModelRef ? { modelRef: effectiveModelRef } : {}),
+		modelSource: "resume-override",
+		requestedModelOverride: requestedModel,
+	};
 }
 
 /**
@@ -77,7 +134,15 @@ export async function resumeSubagentSession(
 	const explicitMode = isResumeMode(input.mode) ? input.mode : undefined;
 	const metadata = resolveResumeLaunchMetadata(sessionFile, explicitMode);
 	const launchMetadata = readSubagentLaunchMetadata(sessionFile);
-	const name = launchMetadata?.name ?? metadata.name ?? input.name ?? "Resume";
+	const invocationMetadata = resolveResumeLaunchMetadataForInvocation(
+		launchMetadata,
+		input.model,
+		runtime.modelRegistry,
+	);
+	if (invocationMetadata && invocationMetadata !== launchMetadata) {
+		writeSubagentLaunchMetadataEntry(sessionFile, invocationMetadata);
+	}
+	const name = invocationMetadata?.name ?? metadata.name ?? input.name ?? "Resume";
 	const displayName = input.name ?? name;
 
 	if (metadata.mode === "interactive" && !runtime.isMuxAvailable()) {
@@ -109,31 +174,31 @@ export async function resumeSubagentSession(
 		"subagent-done.ts",
 	);
 	const savedExtensions =
-		launchMetadata?.extensions ?? readSubagentExtensionEntry(sessionFile);
+		invocationMetadata?.extensions ?? readSubagentExtensionEntry(sessionFile);
 	const extensionArgs = savedExtensions
 		? getExtensionLaunchArgs(savedExtensions, subagentDonePath)
 		: ["--no-extensions", "-e", subagentDonePath];
 	const parityArgs = [
-		...getPersistedPromptLaunchArgs(launchMetadata),
-		...(await getPersistedSessionParityArgs(launchMetadata)),
+		...getPersistedPromptLaunchArgs(invocationMetadata),
+		...(await getPersistedSessionParityArgs(invocationMetadata)),
 	];
-	const resumeCwd = getResumeCwd(launchMetadata);
+	const resumeCwd = getResumeCwd(invocationMetadata);
 
-	const resumedAgent = launchMetadata?.agent ?? metadata.agent ?? input.agent;
+	const resumedAgent = invocationMetadata?.agent ?? metadata.agent ?? input.agent;
 
 	const resumeEnvVars: Record<string, string> = {};
 	// Restore user-configured env vars from the original launch FIRST,
 	// so internal PI vars below can override them if needed.
-	if (launchMetadata?.env) {
-		Object.assign(resumeEnvVars, parseEnvString(launchMetadata.env));
+	if (invocationMetadata?.env) {
+		Object.assign(resumeEnvVars, parseEnvString(invocationMetadata.env));
 	}
-	if (launchMetadata?.agentConfigDir) {
-		resumeEnvVars.PI_CODING_AGENT_DIR = launchMetadata.agentConfigDir;
+	if (invocationMetadata?.agentConfigDir) {
+		resumeEnvVars.PI_CODING_AGENT_DIR = invocationMetadata.agentConfigDir;
 	} else if (process.env.PI_CODING_AGENT_DIR) {
 		resumeEnvVars.PI_CODING_AGENT_DIR = process.env.PI_CODING_AGENT_DIR;
 	}
-	if (launchMetadata?.denyTools?.length) {
-		resumeEnvVars.PI_DENY_TOOLS = launchMetadata.denyTools.join(",");
+	if (invocationMetadata?.denyTools?.length) {
+		resumeEnvVars.PI_DENY_TOOLS = invocationMetadata.denyTools.join(",");
 	} else if (process.env.PI_DENY_TOOLS) {
 		resumeEnvVars.PI_DENY_TOOLS = process.env.PI_DENY_TOOLS;
 	}
@@ -142,13 +207,13 @@ export async function resumeSubagentSession(
 	} else if (process.env.PI_SUBAGENT_EXTENSIONS) {
 		resumeEnvVars.PI_SUBAGENT_EXTENSIONS = process.env.PI_SUBAGENT_EXTENSIONS;
 	}
-	resumeEnvVars.PI_SUBAGENT_NAME = launchMetadata?.name ?? name;
+	resumeEnvVars.PI_SUBAGENT_NAME = invocationMetadata?.name ?? name;
 	if (resumedAgent) resumeEnvVars.PI_SUBAGENT_AGENT = resumedAgent;
 	resumeEnvVars.PI_SUBAGENT_SESSION = sessionFile;
 
-	const resumedAsync = launchMetadata?.async ?? metadata.async ?? true;
+	const resumedAsync = invocationMetadata?.async ?? metadata.async ?? true;
 	const resumedAutoExit =
-		launchMetadata?.autoExit ?? metadata.autoExit ?? true;
+		invocationMetadata?.autoExit ?? metadata.autoExit ?? true;
 	if (resumedAutoExit) resumeEnvVars.PI_SUBAGENT_AUTO_EXIT = "1";
 	resumeEnvVars.PI_PACKAGE_DIR = "";
 	resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
@@ -163,7 +228,7 @@ export async function resumeSubagentSession(
 		executionState: "running",
 		deliveryState: "detached",
 		parentClosePolicy:
-			launchMetadata?.parentClosePolicy ??
+			invocationMetadata?.parentClosePolicy ??
 			metadata.parentClosePolicy ??
 			"terminate",
 		async: resumedAsync,

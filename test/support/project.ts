@@ -14,6 +14,7 @@ export { default as subagentsExtension } from "../../src/subagents.ts";
 export {
 	buildChildContextBoundaryForTest,
 	buildChildContextBoundarySystemPromptForTest,
+	buildPersistedSubagentLaunchMetadataForTest,
 	buildPiPromptArgsForTest,
 	buildResumePiArgsForTest,
 	buildShellChangeDirectoryPrefixForTest,
@@ -29,6 +30,7 @@ export {
 	getNoSessionSeedModeForTest,
 	getPiInvocationForTest,
 	getPiShellPartsForTest,
+	getPersistedSessionParityArgsForTest,
 	getPreparedSessionLaunchArgsForTest,
 	getResumeCwdForTest,
 	getShellReadyDelayMs,
@@ -55,9 +57,11 @@ export {
 	renderAgentListReminderForTest,
 	renderSubagentWidgetForTest,
 	resetSubagentStateForTest,
+	resolveAvailableModelRefForTest,
 	resolveDenyToolsForTest,
 	resolveEffectiveSessionModeForTest,
 
+	resolveResumeLaunchMetadataForInvocationForTest,
 	resolveResumeLaunchMetadataForTest,
 	resolveSubagentBlockingForTest,
 	enforceAgentFrontmatterForTest,
