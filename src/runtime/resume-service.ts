@@ -6,6 +6,7 @@ import { getArtifactStorageRoot } from "../artifact-storage.ts";
 import { getPiInvocation, getPiShellParts, getSubagentChildProcessEnv } from "../launch/child-command.ts";
 import { writeResumeTaskArtifact } from "../launch/prompt-artifacts.ts";
 import { parseEnvString } from "../launch/env.ts";
+import { assertModelAllowed, buildModelRef } from "../agents/model-refs.ts";
 import {
 	getExtensionLaunchArgs,
 	getPersistedPromptLaunchArgs,
@@ -115,6 +116,13 @@ export function resolveResumeLaunchMetadataForInvocation(
 		resolved.model,
 		resolved.thinking,
 	);
+	const implicitDefaultRef = buildModelRef(launchMetadata.definitionModel, launchMetadata.definitionThinking);
+	const implicitAllowed = implicitDefaultRef
+		? [implicitDefaultRef]
+		: launchMetadata.modelSource === "parent" && launchMetadata.modelRef
+			? [launchMetadata.modelRef]
+			: [];
+	assertModelAllowed(effectiveModelRef, launchMetadata.allowedModels, launchMetadata.name, implicitAllowed);
 	return {
 		...launchMetadata,
 		timestamp: new Date().toISOString(),

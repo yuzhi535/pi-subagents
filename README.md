@@ -135,9 +135,10 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `name` | filename | Stable agent name used by `agent: "..."` |
 | `description` | unset | One-line routing hint for ambient awareness |
 | `enabled` | `true` | Set `false` to hide and block the agent |
-| `model` | Pi default | Child model, including optional thinking suffix. When unset, the child inherits the parent's model. |
+| `model` | Pi default | Child default model, including optional thinking suffix. When unset, the child inherits the parent's model. |
 | `thinking` | model default | Child thinking level. When unset, the child inherits the parent's thinking level. |
 | `allow-model-override` | `true` | Whether the parent Pi session may launch or resume this agent with a different model or thinking level. Leave it alone if you want to choose models per task from the parent chat. Set `false` when this agent should always use the model written in its file. |
+| `allowed-models` | unset | Extra exact model refs the parent may choose when `allow-model-override` is enabled. The agent `model` is implicitly allowed and does not need to be repeated. `provider/model` allows any thinking level for that model; `provider/model:thinking` allows only that thinking level. |
 | `cwd` | parent cwd | Working directory for the child |
 | `extensions` | `all` | Which extension code loads in the child: `all`, `none`, or a comma-separated allowlist |
 | `tools` | `all` | Built-in Pi tool availability: `all`, `none`, or a comma-separated subset of `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` |
@@ -171,6 +172,19 @@ Pi splits `env` by line. It does not split values by comma. When you set `PI_COD
 `trust-project` controls Pi's project-local trust boundary. The default `false` passes `--no-approve`, so child sessions ignore project-local settings and project-local context files such as `AGENTS.md`/`CLAUDE.md` even when the parent project was previously approved. Set `trust-project: true` only for interactive children that should inherit those project-local resources. Background children still generate `--no-approve`; `flags` is the explicit advanced escape hatch if you need to override that safety default.
 
 Named-agent frontmatter wins over duplicate launch-time fields such as `tools`, `cwd`, and `mode`. `model` and `thinking` are different: while you are in a parent Pi session, you can ask Pi to run a subagent with a specific model or thinking level for that one launch or resume. That works by default. If an agent file sets `allow-model-override: false`, Pi ignores those per-launch model choices and uses the model from the agent file, or the inherited Pi model if the file does not name one. Use that opt-out for agents whose quality, cost, or safety depends on a specific model.
+
+Use `allowed-models` when an agent should have a small exact model menu:
+
+```yaml
+---
+name: reviewer
+model: zai/glm-5.1:high
+allow-model-override: true
+allowed-models: openai/gpt-5.5:low, nahcrof/glm-5.1:off, anthropic/claude-opus-4-8
+---
+```
+
+`model` is the default and is always allowed. `allowed-models` lists the other models Pi may use for this agent, so you do not need to repeat `model`. The `:thinking` suffix is optional: `provider/model:low` allows only that thinking level, while `provider/model` allows the model with whatever thinking level Pi resolves. If `allow-model-override: false`, Pi ignores launch-time and resume-time model choices as usual.
 
 ## Ambient awareness
 

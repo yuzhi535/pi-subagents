@@ -106,7 +106,10 @@ describe("agent launch configuration", () => {
 	it("persists effective launch model override metadata", () => {
 		const metadata = buildPersistedSubagentLaunchMetadataForTest(
 			{
-				agentDefs: { trustProject: true },
+				agentDefs: {
+					trustProject: true,
+					allowedModels: "provider/other",
+				},
 				effectiveModel: "provider/requested",
 				effectiveThinking: "high",
 				effectiveModelRef: "provider/requested:high",
@@ -132,6 +135,7 @@ describe("agent launch configuration", () => {
 		assert.equal(metadata.trustProject, true);
 		assert.equal(metadata.requestedModelOverride, "provider/requested:high");
 		assert.equal(metadata.modelRef, "provider/requested:high");
+		assert.equal(metadata.allowedModels, "provider/other");
 	});
 
 	it("writes native model and thinking state entries for effective subagent model", async () => {
@@ -195,6 +199,97 @@ describe("agent launch configuration", () => {
 			"provider/requested:high",
 			"--no-approve",
 		]);
+	});
+
+	it("rejects resume model overrides outside persisted allowed models", () => {
+		const base = {
+			version: 1 as const,
+			timestamp: "2026-05-08T00:00:00.000Z",
+			name: "code-review",
+			mode: "background" as const,
+			sessionMode: "lineage-only" as const,
+			parentClosePolicy: "terminate" as const,
+			async: true,
+			model: "zai-messages/glm-5.1",
+			modelRef: "zai-messages/glm-5.1:high",
+			definitionModel: "zai-messages/glm-5.1:high",
+			allowedModels: "nahcrof/glm-5.1:off",
+			allowModelOverride: true,
+			denyTools: [],
+			noContextFiles: false,
+			noSession: false,
+			agentConfigDir: "/tmp",
+			cwd: "/tmp",
+			boundarySystemPrompt: true,
+		};
+
+		assert.throws(
+			() => resolveResumeLaunchMetadataForInvocationForTest(
+				base,
+				"openai-ws/gpt-5.5:low",
+				{
+					getAvailable: () => [
+						{ provider: "zai-messages", id: "glm-5.1" },
+						{ provider: "openai-ws", id: "gpt-5.5" },
+					],
+				},
+			),
+			/Model 'openai-ws\/gpt-5\.5:low' is not allowed for agent 'code-review'/,
+		);
+
+		const defaultAllowed = resolveResumeLaunchMetadataForInvocationForTest(
+			base,
+			"zai-messages/glm-5.1:high",
+			{
+				getAvailable: () => [
+					{ provider: "zai-messages", id: "glm-5.1" },
+				],
+			},
+		);
+		assert.equal(defaultAllowed?.modelRef, "zai-messages/glm-5.1:high");
+
+		const extraAllowed = resolveResumeLaunchMetadataForInvocationForTest(
+			base,
+			"nahcrof/glm-5.1:off",
+			{
+				getAvailable: () => [
+					{ provider: "nahcrof", id: "glm-5.1" },
+				],
+			},
+		);
+		assert.equal(extraAllowed?.modelRef, "nahcrof/glm-5.1:off");
+	});
+
+	it("implicitly allows the persisted default model plus its thinking on resume", () => {
+		const base = {
+			version: 1 as const,
+			timestamp: "2026-05-08T00:00:00.000Z",
+			name: "reviewer",
+			mode: "background" as const,
+			sessionMode: "fork" as const,
+			parentClosePolicy: "terminate" as const,
+			async: true,
+			model: "openai-cpa/gpt-5.5",
+			thinking: "xhigh",
+			modelRef: "openai-cpa/gpt-5.5:xhigh",
+			definitionModel: "openai-cpa/gpt-5.5",
+			definitionThinking: "xhigh",
+			allowedModels: "zai-messages/glm-5.2:xhigh",
+			allowModelOverride: true,
+			denyTools: [],
+			noContextFiles: false,
+			noSession: false,
+			agentConfigDir: "/tmp",
+			cwd: "/tmp",
+			boundarySystemPrompt: true,
+		};
+
+		const defaultAllowed = resolveResumeLaunchMetadataForInvocationForTest(
+			base,
+			"openai-cpa/gpt-5.5:xhigh",
+			{ getAvailable: () => [{ provider: "openai-cpa", id: "gpt-5.5" }] },
+		);
+		assert.equal(defaultAllowed?.modelRef, "openai-cpa/gpt-5.5:xhigh");
 	});
 
 	it("clears stale thinking when resume override drops unsupported inherited thinking", async () => {

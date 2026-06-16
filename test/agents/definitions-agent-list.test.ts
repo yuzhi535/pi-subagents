@@ -11,6 +11,7 @@ import {
 	getEffectiveAgentDefinitionsForTest,
 	getExtensionLaunchArgsForTest,
 	getAgentListSignatureForTest,
+	renderAgentListReminderForTest,
 	loadAgentDefaults,
 	resetSubagentStateForTest,
 	resolveDenyToolsForTest,
@@ -352,6 +353,57 @@ describe("agent definitions and catalog", () => {
 			ambient.some((entry) => entry.name === "hidden-agent"),
 			false,
 		);
+	});
+
+	it("renders compact allowed model choices in the ambient catalog", () => {
+		const dir = createTestDir();
+		const configDir = join(dir, "agent-root");
+		const agentsDir = join(configDir, "agents");
+		mkdirSync(agentsDir, { recursive: true });
+		process.env.PI_CODING_AGENT_DIR = configDir;
+
+		writeFileSync(
+			join(agentsDir, "reviewer.md"),
+			`---\nname: reviewer\ndescription: Review changes\nmode: background\nmodel: zai-messages/glm-5.1\nthinking: high\nallow-model-override: true\nallowed-models: openai-ws/gpt-5.5:low, nahcrof/glm-5.1:off\n---\n\nReviewer body.`,
+		);
+		writeFileSync(
+			join(agentsDir, "scout.md"),
+			`---\nname: scout\ndescription: Inspect files\nmode: background\n---\n\nScout body.`,
+		);
+
+		const defs = loadAgentDefaults("reviewer");
+		assert.equal(defs?.allowedModels, "openai-ws/gpt-5.5:low, nahcrof/glm-5.1:off");
+
+		const entries = getAgentListEntriesForTest(dir);
+		const reminder = renderAgentListReminderForTest(entries);
+		assert.match(reminder, /default_model: zai-messages\/glm-5\.1:high/);
+		assert.match(reminder, /models: openai-ws\/gpt-5\.5:low \| nahcrof\/glm-5\.1:off/);
+		assert.doesNotMatch(reminder, /- `scout`: Inspect files\n(?:  .+\n){4,5}  models:/);
+		assert.match(reminder, /`models:` lists this agent's selectable model refs/);
+
+		const firstSignature = getAgentListSignatureForTest(entries);
+		writeFileSync(
+			join(agentsDir, "reviewer.md"),
+			`---\nname: reviewer\ndescription: Review changes\nmode: background\nmodel: zai-messages/glm-5.1:high\nallow-model-override: true\nallowed-models: anthropic-kiro/claude-opus-4-8-thinking:xhigh\n---\n\nReviewer body.`,
+		);
+		assert.notEqual(firstSignature, getAgentListSignatureForTest(getAgentListEntriesForTest(dir)));
+	});
+
+	it("hides selectable models when allow-model-override is false", () => {
+		const dir = createTestDir();
+		const configDir = join(dir, "agent-root");
+		const agentsDir = join(configDir, "agents");
+		mkdirSync(agentsDir, { recursive: true });
+		process.env.PI_CODING_AGENT_DIR = configDir;
+
+		writeFileSync(
+			join(agentsDir, "reviewer.md"),
+			`---\nname: reviewer\ndescription: Review changes\nmode: background\nmodel: zai-messages/glm-5.1:high\nallow-model-override: false\nallowed-models: openai-ws/gpt-5.5:low\n---\n\nReviewer body.`,
+		);
+
+		const reminder = renderAgentListReminderForTest(getAgentListEntriesForTest(dir));
+		assert.doesNotMatch(reminder, /models:/);
+		assert.doesNotMatch(reminder, /selectable model refs/);
 	});
 
 	it("defaults spawning to false for named agent definitions", () => {

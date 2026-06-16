@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 export interface AgentDefaults {
 	enabled?: boolean;
 	model?: string;
+	allowedModels?: string;
 	allowModelOverride?: boolean;
 	tools?: string;
 	skills?: string;
@@ -101,6 +102,7 @@ function parseAgentDefinition(
 		path,
 		enabled: enabledRaw != null ? enabledRaw === "true" : undefined,
 		model: get("model"),
+		allowedModels: get("allowed-models"),
 		allowModelOverride:
 			allowModelOverrideRaw != null
 				? allowModelOverrideRaw === "true"

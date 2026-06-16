@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentDefaults } from "../agents/definitions.ts";
+import { assertModelAllowed } from "../agents/model-refs.ts";
 import { buildSubagentSessionTitle } from "../agents/titles.ts";
 import {
 	generateSubagentSessionFile,
@@ -154,25 +155,44 @@ export async function buildChildLaunchPlan(
 	options: ChildLaunchPlanOptions,
 ): Promise<ChildLaunchPlan> {
 	const { params, agentDefs, parentCwd, parentSessionDir } = options;
+	const hasAllowedModels = !!agentDefs?.allowedModels?.trim();
+	const resolveRef = (
+		model: string | undefined,
+		fallbackThinking: string | undefined,
+		opts: { resolveAlways: boolean; explicitThinking: boolean },
+	): { effectiveModel?: string; effectiveThinking?: string; effectiveModelRef?: string } => {
+		const split = splitModelRefThinking(model, fallbackThinking);
+		const explicit = split.explicitThinking || opts.explicitThinking;
+		// Resolve a bare id (no provider) through the registry only when this is a
+		// launch override or when this agent opts into allowed-models; otherwise
+		// pass it through untouched so agents without the feature keep Pi's native
+		// model resolution.
+		const shouldResolve = !!split.model && (opts.resolveAlways || (hasAllowedModels && !split.model.includes("/")));
+		const available = shouldResolve
+			? resolveAvailableModelRef(split.model, split.thinking, explicit, options.modelRegistry, options.parentModelRef)
+			: split;
+		return normalizeModelRef(available.model, available.thinking);
+	};
+
 	const requestedModel = params.model ?? agentDefs?.model ?? options.parentModelRef;
-	const requested = splitModelRefThinking(
+	const { effectiveModel, effectiveThinking, effectiveModelRef } = resolveRef(
 		requestedModel,
 		params.thinking ?? agentDefs?.thinking ?? options.parentThinking,
+		{ resolveAlways: params.model != null, explicitThinking: params.thinking != null },
 	);
-	const explicitThinking = requested.explicitThinking || params.thinking != null;
-	const availableRequested = params.model
-		? resolveAvailableModelRef(
-			requested.model,
-			requested.thinking,
-			explicitThinking,
-			options.modelRegistry,
-			options.parentModelRef,
-		)
-		: requested;
-	const { effectiveModel, effectiveThinking, effectiveModelRef } = normalizeModelRef(
-		availableRequested.model,
-		availableRequested.thinking,
-	);
+	if (hasAllowedModels) {
+		const defaultModelRef = resolveRef(
+			agentDefs?.model ?? options.parentModelRef,
+			agentDefs?.thinking ?? options.parentThinking,
+			{ resolveAlways: false, explicitThinking: false },
+		).effectiveModelRef;
+		assertModelAllowed(
+			effectiveModelRef,
+			agentDefs?.allowedModels,
+			params.agent,
+			defaultModelRef ? [defaultModelRef] : [],
+		);
+	}
 
 	const runtimePaths = resolveSubagentRuntimePaths(
 		params,

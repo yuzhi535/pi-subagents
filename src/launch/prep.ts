@@ -332,6 +332,7 @@ export function buildPersistedSubagentLaunchMetadata(
 			: {}),
 		...(prepared.agentDefs?.model ? { definitionModel: prepared.agentDefs.model } : {}),
 		...(prepared.agentDefs?.thinking ? { definitionThinking: prepared.agentDefs.thinking } : {}),
+		...(prepared.agentDefs?.allowedModels ? { allowedModels: prepared.agentDefs.allowedModels } : {}),
 		allowModelOverride,
 		...(modelSource ? { modelSource } : {}),
 		...(params.model ? { requestedModelOverride: params.model } : {}),
