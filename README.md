@@ -34,11 +34,34 @@ Two axes matter:
 - `interactive` or `background`: where the child runs
 - async or sync: whether the parent waits
 
-`interactive` means foreground. Pi opens a visible surface through cmux, tmux, zellij, or WezTerm. To keep children usable, normal interactive launches use a non-shrinking surface such as a tab, window, or stacked pane when repeated splits would make panes too small.
+`interactive` means foreground. Pi opens a visible surface through Herdr, cmux, tmux, zellij, or WezTerm. To keep children usable, normal interactive launches use a non-shrinking surface such as a tab, window, or stacked pane when repeated splits would make panes too small.
 
 `background` means headless. Pi starts a `pi -p` child process without opening a pane.
 
 Async means the parent gets a “started” result and the child answer comes back later. Sync means the parent waits for the child answer before it continues.
+
+### Interactive mux backends
+
+Pi chooses an interactive backend when it launches an interactive child. Set `PI_SUBAGENT_MUX` to force one backend, or leave it unset to let Pi detect the current terminal environment.
+
+Herdr is available when all of these checks pass:
+
+- `herdr` is on `PATH`
+- `herdr status server --json` reports a running compatible server
+- `herdr pane current --current` can identify the current Herdr pane
+
+Start Pi from inside Herdr when you want automatic Herdr selection:
+
+```bash
+herdr
+pi
+```
+
+When Herdr is available and `PI_SUBAGENT_MUX` is unset, Pi prefers Herdr over an outer cmux, tmux, zellij, or WezTerm environment. Set `PI_SUBAGENT_MUX=tmux`, `cmux`, `zellij`, or `wezterm` when you want that backend instead. Set `PI_SUBAGENT_MUX=herdr` when the launch must use Herdr; if the Herdr checks fail, Pi reports that no supported mux is available instead of falling back silently.
+
+Normal Herdr child launches create a new Herdr tab in the current workspace. That keeps the parent pane from shrinking as more children open. The created child pane receives the resolved child cwd, environment, frontmatter-derived Pi arguments, `PI_SUBAGENT_SURFACE`, and the same lifecycle policy as other interactive backends.
+
+Explicit split requests are narrower. Herdr supports right and down splits through this package. Left and up split requests fail with a clear unsupported-direction error because Herdr cannot place those directions through the adapter without lying about pane placement. Normal subagent launches do not use that split path.
 
 ### Orchestrator mode
 
@@ -546,7 +569,7 @@ User-facing knobs:
 | --- | --- |
 | `PI_ORCHESTRATOR_MODE` | Set `1` to turn the parent into an orchestrator (delegation-only tools, replacement system prompt) |
 | `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper command |
-| `PI_SUBAGENT_MUX` | Force `cmux`, `tmux`, `zellij`, or `wezterm` |
+| `PI_SUBAGENT_MUX` | Force `herdr`, `cmux`, `tmux`, `zellij`, or `wezterm` |
 | `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |
 | `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` | Set `1` to let the parent keep running after async launches |
 | `PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY` | Set `1` for raw forks with no boundary marker |
@@ -580,8 +603,18 @@ Live test knobs:
 Unit tests:
 
 ```bash
+bunx tsc --noEmit
 npm test
 ```
+
+Herdr-focused fake tests:
+
+```bash
+node --test test/mux/herdr.test.ts
+node --test test/launch/herdr-interactive-launch.test.ts
+```
+
+The mux test covers Herdr detection, forced preferences, adapter error reporting, non-shrinking tab creation, split limitations, command send, screen reads, title and workspace labels, and cleanup. The launch test covers Herdr parity for cwd, env, flags, trust-project approval, session settings, model and thinking resolution, tool narrowing, skills, lifecycle policy, and explicit `PI_SUBAGENT_MUX=herdr` selection.
 
 Live tests:
 
@@ -595,6 +628,39 @@ npm run test:e2e-live-stop-after-turn
 ```
 
 The live window tests require an explicit opt-in because they open real terminal windows.
+
+Herdr live smoke tests are guarded and bounded:
+
+```bash
+npm run test:live-herdr-mux
+npm run test:live-herdr-pi
+```
+
+Without opt-in variables, each Herdr smoke prints a `SKIP` line and exits before creating Herdr panes or tabs. Use the skip output as guard evidence only. It is not a real live smoke run.
+
+Run the real Herdr mux smoke only when you are ready to create temporary Herdr windows:
+
+```bash
+PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 npm run test:live-herdr-mux
+```
+
+Run the real Pi Herdr smoke with both live opt-ins and a model. This script starts an interactive parent Pi session inside a Herdr-managed pane. It does not use `pi -p` as proof of interactive child behavior.
+
+```bash
+PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 \
+PI_SUBAGENT_LIVE_MODEL=provider/model[:thinking] \
+npm run test:live-herdr-pi
+```
+
+Both Herdr smoke scripts check the `herdr` command, server running status, and protocol compatibility before mutating panes. They label created tabs and panes with a unique marker, then close marked surfaces during cleanup.
+
+Herdr validation record for this release:
+
+- `node --test test/mux/herdr.test.ts` passes the fake Herdr mux contract suite.
+- `node --test test/launch/herdr-interactive-launch.test.ts` passes the fake Herdr launch parity suite.
+- `bunx tsc --noEmit` passes type checking.
+- `npm test` runs the registered Herdr mux and launch suites through the repository test entrypoint.
+- `npm run test:live-herdr-mux` and `npm run test:live-herdr-pi` pass their skip guards when `PI_SUBAGENT_ALLOW_LIVE_WINDOWS` and `PI_SUBAGENT_LIVE_MODEL` are unset. A real live run requires the opt-in variables above.
 
 ## Credits
 

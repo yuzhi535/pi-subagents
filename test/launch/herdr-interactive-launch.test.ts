@@ -91,15 +91,19 @@ function writeParentSession(dir: string): string {
 	]);
 }
 
-async function readEventually(path: string): Promise<string> {
+async function readEventually(
+	path: string,
+	isReady: (text: string) => boolean = (text) => text.trim().length > 0,
+): Promise<string> {
+	let lastText = "";
 	for (let attempt = 0; attempt < 50; attempt++) {
 		if (existsSync(path)) {
-			const text = readFileSync(path, "utf8");
-			if (text.trim()) return text;
+			lastText = readFileSync(path, "utf8");
+			if (isReady(lastText)) return lastText;
 		}
 		await sleep(10);
 	}
-	throw new Error(`Timed out waiting for ${path}`);
+	throw new Error(`Timed out waiting for ${path}; last content: ${lastText}`);
 }
 
 function extractTaskArtifactPath(log: string): string {
@@ -439,7 +443,10 @@ describe("Herdr interactive launch parity", () => {
 			{ getContextWindow: () => 2048 },
 		);
 
-		const childLog = await readEventually(childLogFile);
+		const childLog = await readEventually(
+			childLogFile,
+			(text) => text.includes("CUSTOM_ENV=") && text.includes("SURFACE="),
+		);
 		assert.equal(running.mode, "background");
 		assert.equal(running.surface, undefined);
 		assert.equal(running.modelContextWindow, 2048);

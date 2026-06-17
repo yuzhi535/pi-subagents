@@ -10,6 +10,7 @@ import "./launch/child-launch-plan.test.ts";
 import "./launch/launch-coordinator.test.ts";
 import "./launch/herdr-interactive-launch.test.ts";
 import "./launch/config.test.ts";
+import "./launch/resume-model-config.test.ts";
 import "./launch/env-frontmatter.test.ts";
 import "./agents/definitions-agent-list.test.ts";
 import "./runtime/launch-results.test.ts";
