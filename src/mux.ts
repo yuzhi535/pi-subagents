@@ -24,4 +24,3 @@ export {
 	sendShellCommand,
 } from "./mux/io.ts";
 export { consumeSubagentExitSignal, pollForExit } from "./mux/poll.ts";
-export type { MuxBackend } from "./mux/core.ts";

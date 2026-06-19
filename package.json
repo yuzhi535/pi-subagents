@@ -41,6 +41,18 @@
       "./src/index.ts"
     ]
   },
+  "knip": {
+    "ignoreBinaries": [
+      "cmux",
+      "ghostty",
+      "herdr",
+      "pkill",
+      "tmux",
+      "where.exe",
+      "wezterm",
+      "zellij"
+    ]
+  },
   "trustedDependencies": [
     "koffi",
     "protobufjs"

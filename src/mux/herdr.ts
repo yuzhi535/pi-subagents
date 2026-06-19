@@ -53,7 +53,7 @@ type HerdrExecError = Error & {
 
 const execFileAsync = promisify(execFile);
 
-export class HerdrCommandError extends Error {
+class HerdrCommandError extends Error {
 	readonly operation: string;
 	readonly code?: string;
 

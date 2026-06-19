@@ -32,7 +32,7 @@ export function buildModelRef(
 	return trimmedThinking ? `${trimmedModel}:${trimmedThinking}` : trimmedModel;
 }
 
-export function isModelAllowed(
+function isModelAllowed(
 	effectiveModelRef: string,
 	allowedModelRef: string,
 ): boolean {
