@@ -34,8 +34,10 @@ export const SPAWNING_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Child-side protocol tools that pi-subagents injects into every child
- * regardless of `tools:` allowlist (unless explicitly denied).
+ * Child-side protocol tools owned by pi-subagents. `caller_ping` and
+ * `subagent_done` are kept available in narrowed child `tools:` allowlists
+ * unless explicitly denied. `set_tab_title` is optional and is added only when
+ * PI_SUBAGENT_ENABLE_SET_TAB_TITLE=1 and not denied.
  */
 export const SUBAGENT_PROTOCOL_TOOL_NAMES: readonly string[] = [
 	CALLER_PING_TOOL_NAME,

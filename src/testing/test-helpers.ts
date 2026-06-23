@@ -78,10 +78,10 @@ import {
 	addToolModeDeniedNames,
 	getSubagentToolAllowlist,
 	getSubagentToolLaunchArgs,
-	getSubagentToolsConfigError,
+	getSubagentToolsWarning,
 	resolveDenyTools,
 } from "../tools/policy.ts";
-import { getSubagentNameError, isInitialPromptInvocation, isOneShotPromptInvocation, shouldForceSynchronousLaunch } from "../tools/subagent-tools.ts";
+import { getSubagentNameError, isInitialPromptInvocation, isOneShotPromptInvocation, shouldForceSynchronousLaunch, withToolWarning } from "../tools/subagent-tools.ts";
 import {
 	buildSubagentSessionTitle,
 	getSubagentDisplayTitle,
@@ -333,8 +333,12 @@ export function getSubagentAgentRequirementErrorForTest(
 	return getSubagentAgentRequirementError(params, agentDefs);
 }
 
-export function getSubagentToolsConfigErrorForTest(tools?: string, agent?: string) {
-	return getSubagentToolsConfigError(tools, agent);
+export function getSubagentToolsWarningForTest(tools?: string) {
+	return getSubagentToolsWarning(tools);
+}
+
+export function withToolWarningForTest(result: unknown, warningPrefix: string) {
+	return withToolWarning(result as never, warningPrefix);
 }
 
 export function getSubagentAgentOverrideErrorForTest(

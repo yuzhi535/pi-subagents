@@ -561,27 +561,34 @@ describe("agent launch configuration", () => {
 	});
 
 	it("adds native exclude-tools for the resolved deny set", async () => {
-		assert.deepEqual(getSubagentToolLaunchArgsForTest("all", ["subagent", "bash"]), [
-			"--exclude-tools",
-			"subagent,bash",
-		]);
-		assert.deepEqual(getSubagentToolLaunchArgsForTest("none", ["read", "bash", "subagent"]), [
-			"--no-builtin-tools",
-			"--exclude-tools",
-			"read,bash,subagent",
-		]);
-		assert.deepEqual(getSubagentToolLaunchArgsForTest("read,grep", ["grep", "subagent"]), [
-			"--tools",
-			"read,grep,caller_ping,subagent_done,set_tab_title",
-			"--exclude-tools",
-			"grep,subagent",
-		]);
-		assert.deepEqual(getSubagentToolLaunchArgsForTest("bash", ["bash"]), [
-			"--tools",
-			"bash,caller_ping,subagent_done,set_tab_title",
-			"--exclude-tools",
-			"bash",
-		]);
+		const original = process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
+		try {
+			delete process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
+			assert.deepEqual(getSubagentToolLaunchArgsForTest("all", ["subagent", "bash"]), [
+				"--exclude-tools",
+				"subagent,bash",
+			]);
+			assert.deepEqual(getSubagentToolLaunchArgsForTest("none", ["read", "bash", "subagent"]), [
+				"--no-builtin-tools",
+				"--exclude-tools",
+				"read,bash,subagent",
+			]);
+			assert.deepEqual(getSubagentToolLaunchArgsForTest("read,grep", ["grep", "subagent"]), [
+				"--tools",
+				"read,grep,caller_ping,subagent_done",
+				"--exclude-tools",
+				"grep,subagent",
+			]);
+			assert.deepEqual(getSubagentToolLaunchArgsForTest("bash", ["bash"]), [
+				"--tools",
+				"bash,caller_ping,subagent_done",
+				"--exclude-tools",
+				"bash",
+			]);
+		} finally {
+			if (original == null) delete process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
+			else process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = original;
+		}
 	});
 
 	it("parses flags frontmatter and makes it available on AgentDefaults", () => {

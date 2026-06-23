@@ -15,7 +15,7 @@ import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../ty
 import { asSubagentToolResult, getCoordinatorOnlyTurnPrompt, getSubagentBatchStopMetadata, markSubagentBatchBlocking } from "../runtime/state.ts";
 
 import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
-import { getSubagentToolsConfigError } from "./policy.ts";
+import { getSubagentToolsWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
 import {
 	SET_TAB_TITLE_TOOL_NAME,
@@ -103,14 +103,26 @@ export function getSubagentNameError(name: string | undefined): string | null {
 	return null;
 }
 
+export function withToolWarning(result: ToolResult, warningPrefix: string): ToolResult {
+	if (!warningPrefix) return result;
+	const existingText = result.content
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.map((block) => block.text)
+		.join("\n\n");
+	// Spread the original result so batch/turn-control fields like `terminate`
+	// survive; only the text content is prepended with the warning.
+	return asSubagentToolResult({
+		...result,
+		content: [{ type: "text", text: `${warningPrefix}\n\n${existingText}` }],
+	});
+}
+
 function getLaunchError(params: SubagentParamsInput, agentDefs: AgentDefaults | null, currentAgent: string | undefined): string | null {
 	const nameError = getSubagentNameError(params.name);
 	if (nameError) return nameError;
 	if (!params.title?.trim()) return "Error: title is required for subagent launches. Provide a short sentence-case title for the child session/widget.";
 	const agentError = getSubagentAgentRequirementError(params, agentDefs);
 	if (agentError) return agentError.content[0]?.text ?? "Agent requirement error";
-	const toolsConfigError = getSubagentToolsConfigError(agentDefs?.tools, params.agent);
-	if (toolsConfigError) return toolsConfigError.content[0]?.text ?? "Tools config error";
 	if (params.agent && currentAgent && params.agent === currentAgent) {
 		return `You are the ${currentAgent} agent — do not start another ${currentAgent}. You were spawned to do this work yourself. Complete the task directly.`;
 	}
@@ -290,7 +302,7 @@ export function registerSubagentCoreTools(
 				const agentDefs = runtime.loadAgentDefaults(child.agent, ctx.cwd);
 				const error = getLaunchError(child, agentDefs, currentAgent);
 				if (error) throw new Error(error);
-				return { child, agentDefs, blocking: resolveSubagentBlocking(child, agentDefs) };
+				return { child, agentDefs, blocking: resolveSubagentBlocking(child, agentDefs), warning: getSubagentToolsWarning(agentDefs?.tools) };
 			});
 			const hasBlockingChild = prepared.some((entry) => entry.blocking);
 			if (prepared.length > 1 && hasBlockingChild) {
@@ -304,17 +316,21 @@ export function registerSubagentCoreTools(
 				runtime.wireSubagentSteerBack(pi, running, running.completionPromise!);
 			}
 			runtime.startWidgetRefresh();
+			const warnings = prepared.map((entry) => entry.warning?.message ?? "");
+			const warningPrefix = warnings.filter(Boolean).join("\n\n");
 			if (launched.length === 1) {
-				return runtime.getLaunchedSubagentResult(
+				const result = await runtime.getLaunchedSubagentResult(
 					launched[0],
 					getToolWaitSignal(launched[0], signal),
 				);
+				return withToolWarning(result, warningPrefix);
 			}
 
 			const results = await Promise.all(launched.map((running) => runtime.getLaunchedSubagentResult(running, getToolWaitSignal(running, signal))));
 			const texts = results.flatMap((result) => result.content).filter((block) => block.type === "text").map((block) => block.text);
+			const joined = texts.join("\n\n");
 			return asSubagentToolResult({
-				content: [{ type: "text", text: texts.join("\n\n") }],
+				content: [{ type: "text", text: warningPrefix ? `${warningPrefix}\n\n${joined}` : joined }],
 				details: {
 					status: hasBlockingChild ? "batch" : "started",
 					children: results.map((result, index) => ({

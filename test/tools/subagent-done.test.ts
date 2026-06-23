@@ -9,9 +9,10 @@ import {
 	shouldAutoExitOnAgentEnd,
 	shouldMarkUserTookOver,
 	getSubagentToolAllowlistForTest,
+	getSubagentToolsWarningForTest,
+	withToolWarningForTest,
 	getSubagentToolDeniedNamesForTest,
 	getSubagentToolLaunchArgsForTest,
-	getSubagentToolsConfigErrorForTest,
 	subagentDoneExtension,
 	filterToolNames,
 	getDeniedToolNames,
@@ -20,6 +21,18 @@ import {
 	createTestDir,
 	sleep,
 } from "../support/index.ts";
+
+function withSetTabTitleEnv<T>(value: string | undefined, run: () => T): T {
+	const original = process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
+	try {
+		if (value === undefined) delete process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
+		else process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = value;
+		return run();
+	} finally {
+		if (original == null) delete process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
+		else process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = original;
+	}
+}
 
 describe("subagent-done.ts", () => {
 	describe("shouldMarkUserTookOver", () => {
@@ -108,20 +121,54 @@ describe("subagent-done.ts", () => {
 			);
 		});
 
-		it("keeps subagent protocol tools available when built-in tools are narrowed", () => {
-			assert.deepEqual(getSubagentToolAllowlistForTest("bash"), [
-				"bash",
-				"caller_ping",
-				"subagent_done",
-				"set_tab_title",
-			]);
+		it("keeps required subagent protocol tools available when built-in tools are narrowed", () => {
+			withSetTabTitleEnv(undefined, () => {
+				assert.deepEqual(getSubagentToolAllowlistForTest("bash"), [
+					"bash",
+					"caller_ping",
+					"subagent_done",
+				]);
+			});
+		});
+
+		it("adds set_tab_title to narrowed child launch allowlists only when opted in", () => {
+			withSetTabTitleEnv("1", () => {
+				assert.deepEqual(getSubagentToolAllowlistForTest("bash"), [
+					"bash",
+					"caller_ping",
+					"subagent_done",
+					"set_tab_title",
+				]);
+			});
+		});
+
+		it("does not let disabled set_tab_title-only allowlists fall back to default tools", () => {
+			withSetTabTitleEnv(undefined, () => {
+				assert.deepEqual(getSubagentToolLaunchArgsForTest("set_tab_title", []), [
+					"--tools",
+					"caller_ping,subagent_done",
+				]);
+				assert.deepEqual(
+					getSubagentToolLaunchArgsForTest("set_tab_title", [
+						"caller_ping",
+						"subagent_done",
+					]),
+					[
+						"--no-tools",
+						"--exclude-tools",
+						"caller_ping,subagent_done",
+					],
+				);
+			});
 		});
 
 		it("removes denied subagent protocol tools from the launch allowlist", () => {
-			assert.deepEqual(
-				getSubagentToolAllowlistForTest("bash,read", ["caller_ping"]),
-				["bash", "read", "subagent_done", "set_tab_title"],
-			);
+			withSetTabTitleEnv(undefined, () => {
+				assert.deepEqual(
+					getSubagentToolAllowlistForTest("bash,read", ["caller_ping"]),
+					["bash", "read", "subagent_done"],
+				);
+			});
 		});
 
 		it("keeps non-requested built-ins out of narrowed child launch allowlists", () => {
@@ -168,20 +215,82 @@ describe("subagent-done.ts", () => {
 		});
 
 		it("maps narrowed built-in tools to a tool allowlist with protocol tools", () => {
-			assert.deepEqual(getSubagentToolLaunchArgsForTest("bash", []), [
-				"--tools",
-				"bash,caller_ping,subagent_done,set_tab_title",
-			]);
+			withSetTabTitleEnv(undefined, () => {
+				assert.deepEqual(getSubagentToolLaunchArgsForTest("bash", []), [
+					"--tools",
+					"bash,caller_ping,subagent_done",
+				]);
+			});
 		});
 
-		it("rejects unknown tools values instead of falling back to full access", () => {
-			const error = getSubagentToolsConfigErrorForTest("bash,nope", "worker");
-			assert.equal(error?.details.error, "invalid_tools");
-			assert.deepEqual(error?.details.invalid, ["nope"]);
-			assert.match(
-				error?.content[0]?.text ?? "",
-				/invalid tools value for agent "worker": nope/,
+		it("passes extension and custom tool names through narrowed child launch allowlists", () => {
+			withSetTabTitleEnv(undefined, () => {
+				assert.deepEqual(getSubagentToolLaunchArgsForTest("bash,mcp", []), [
+					"--tools",
+					"bash,mcp,caller_ping,subagent_done",
+				]);
+			});
+		});
+
+		it("keeps a denied custom tool in --exclude-tools even when it appears in the allowlist", () => {
+			withSetTabTitleEnv(undefined, () => {
+				assert.deepEqual(getSubagentToolLaunchArgsForTest("bash,mcp", ["mcp"]), [
+					"--tools",
+					"bash,mcp,caller_ping,subagent_done",
+					"--exclude-tools",
+					"mcp",
+				]);
+			});
+		});
+
+		it("warns (non-blocking) on a likely built-in typo instead of letting Pi silently drop it", () => {
+			const transposition = getSubagentToolsWarningForTest("read,edti");
+			assert.equal(transposition?.suggestion, "edit");
+			assert.equal(transposition?.name, "edti");
+			assert.match(transposition?.message ?? "", /may be a typo of built-in "edit"/);
+			assert.match(transposition?.message ?? "", /Warning:/);
+
+			assert.equal(getSubagentToolsWarningForTest("rerd")?.suggestion, "read");
+			assert.equal(getSubagentToolsWarningForTest("wr1te")?.suggestion, "write");
+		});
+
+		it("does not flag legitimate custom/extension tool names as built-in typos", () => {
+			assert.equal(getSubagentToolsWarningForTest("read,mcp"), null);
+			assert.equal(getSubagentToolsWarningForTest("reader"), null);
+			assert.equal(getSubagentToolsWarningForTest("caller_ping"), null);
+			assert.equal(getSubagentToolsWarningForTest("all"), null);
+			assert.equal(getSubagentToolsWarningForTest("none"), null);
+			assert.equal(getSubagentToolsWarningForTest(undefined), null);
+		});
+
+		it("reports a warning for plausible near-builtin custom names instead of blocking them", () => {
+			// exit≈edit, hash≈bash, reads≈read: these are plausible custom tools,
+			// so the guard must only WARN (never block). It still surfaces the hint.
+			assert.equal(getSubagentToolsWarningForTest("exit")?.suggestion, "edit");
+			assert.equal(getSubagentToolsWarningForTest("hash")?.suggestion, "bash");
+			assert.equal(getSubagentToolsWarningForTest("reads")?.suggestion, "read");
+		});
+
+		it("preserves terminate and details when prepending a warning to a result", () => {
+			const result = withToolWarningForTest(
+				{ content: [{ type: "text", text: "Sub-agent started." }], details: { status: "started" }, terminate: true },
+				"Warning: edti may be a typo of edit.",
 			);
+			assert.equal((result as { terminate?: true }).terminate, true);
+			assert.deepEqual((result as { details: unknown }).details, { status: "started" });
+			const text = (result as { content: Array<{ type: string; text: string }> }).content
+				.filter((block) => block.type === "text")
+				.map((block) => block.text)
+				.join("\n");
+			assert.match(text, /Warning: edti may be a typo of edit\./);
+			assert.match(text, /Sub-agent started\./);
+
+			// No warning: result returned untouched, including terminate.
+			const untouched = withToolWarningForTest(
+				{ content: [{ type: "text", text: "ok" }], details: {}, terminate: true },
+				"",
+			);
+			assert.equal((untouched as { terminate?: true }).terminate, true);
 		});
 
 		it("preserves CLI-disabled built-ins while applying denied tool filters", () => {

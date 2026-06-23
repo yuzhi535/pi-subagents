@@ -151,7 +151,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `allowed-models` | unset | Extra exact model refs the parent may choose when `allow-model-override` is enabled. The agent `model` is implicitly allowed and does not need to be repeated. `provider/model` allows any thinking level for that model; `provider/model:thinking` allows only that thinking level. |
 | `cwd` | parent cwd | Working directory for the child |
 | `extensions` | `all` | Which extension code loads in the child: `all`, `none`, or a comma-separated allowlist |
-| `tools` | `all` | Built-in Pi tool availability: `all`, `none`, or a comma-separated subset of `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` |
+| `tools` | `all` | Child tool availability: `all`, `none`, or a comma-separated allowlist of Pi tool names. Lists may include built-in, extension/custom, and protocol tools. `none` disables built-in tools while preserving extension/custom tools unless denied. |
 | `deny-tools` | unset | Final comma-separated tool names to remove from the child after built-in tools, extensions, and protocol tools are selected |
 | `skills` | `all` | Child skill availability: `all`, `none`, or a comma-separated allowlist resolved by skill name |
 | `inject-skills` | unset | Comma-separated skills to load into the child prompt before the task |
@@ -503,15 +503,17 @@ inject-skills: deep-research
 ---
 ```
 
-The `tools` field narrows built-in Pi tools. Protocol tools such as `caller_ping` and `subagent_done` stay available unless you deny them.
+The `tools` field narrows the child to a Pi tool allowlist. Use built-in names such as `read` and `bash`, extension/custom names such as `mcp`, and protocol names such as `caller_ping` when they should be part of the final allowlist. Pi-subagents keeps required child protocol tools available in narrowed allowlists. The optional `set_tab_title` protocol tool is added only when `PI_SUBAGENT_ENABLE_SET_TAB_TITLE=1`. When `tools` is omitted or set to `all`, Pi keeps its default active tool set. When `tools` is `none`, Pi disables built-in tools while preserving extension/custom tools unless you deny them.
+
+Pi silently ignores `--tools` names that are not registered by a built-in or a loaded extension. That means a typo (for example `tools: read,edti`) leaves the child silently without `edit`. pi-subagents surfaces a non-blocking warning in the subagent result when a name is within one edit of a built-in (`edti`→`edit`, `raed`→`read`); the launch still proceeds, because a near-miss name can be a legitimate custom tool (for example `hash` is one edit from `bash`). pi-subagents cannot validate arbitrary extension/custom tool names before the child loads its extensions, so ensure every custom/extension name in `tools:` is registered by an extension listed in `extensions:`.
 
 `deny-tools` is a final named tool denylist. It can remove built-in Pi tools, extension/custom tools, or pi-subagents protocol tools after they have otherwise been selected.
 
 ```md
 ---
 name: reviewer
-tools: read,grep
-extensions: all
+tools: read,grep,mcp
+extensions: npm:pi-mcp-adapter
 deny-tools: bash,edit,write,ask_user
 ---
 ```
