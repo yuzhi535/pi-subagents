@@ -76,6 +76,7 @@ import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import { markInitialPromptLaunchComplete, registerSubagentCoreTools } from "./tools/subagent-tools.ts";
 import { traceSubagentLaunch } from "./launch/trace.ts";
 import { registerSubagentsView } from "./tools/subagents-view.ts";
+import { registerMainContinuation } from "./runtime/main-continuation.ts";
 
 export { markSubagentBatchBlocking as markSubagentBatchBlockingForTest } from "./runtime/state.ts";
 export { requestSubagentBatchStop as requestSubagentBatchStopForTest } from "./runtime/state.ts";
@@ -139,6 +140,7 @@ function muxUnavailableResult(kind: "subagents" | "tab-title" = "subagents") {
 }
 
 export default function subagentsExtension(pi: ExtensionAPI) {
+	registerMainContinuation(pi);
 	function attachWidgetContext(ctx: ExtensionContext) {
 		widgetManager.attachContext(ctx);
 	}

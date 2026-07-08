@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import type { SubagentLaunchContext } from "./launch/prep.ts";
 
 export type DeliveryState = "detached" | "awaited";
 export type ParentClosePolicy = "terminate" | "continue";
@@ -105,6 +106,11 @@ export interface RunningSubagent {
 	allowSteerDelivery?: boolean;
 	shutdownTimer?: ReturnType<typeof setTimeout>;
 	doneSentinelFile?: string;
+	continuationCount?: number;
+	continuationTriggered?: boolean;
+	continuationHandoffFile?: string;
+	continuationParams?: SubagentParamsInput;
+	continuationLaunchContext?: SubagentLaunchContext;
 }
 
 export interface StartedSubagentToolDetails {

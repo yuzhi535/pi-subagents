@@ -18,6 +18,7 @@ import "./runtime/launch-results.test.ts";
 import "./runtime/result-router.test.ts";
 import "./runtime/state.test.ts";
 import "./runtime/elapsed-format.test.ts";
+import "./runtime/continuation.test.ts";
 
 import "./agents/ambient-runtime-paths.test.ts";
 import "./launch/fork-session.test.ts";

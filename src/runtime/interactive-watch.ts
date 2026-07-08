@@ -3,13 +3,62 @@ import {
 	closeSurface,
 	consumeSubagentExitSignal,
 	pollForExit,
+	sendCommand,
 } from "../mux.ts";
-import type { RunningSubagent, SubagentResult } from "../types.ts";
-import { findLastSubagentOutput, getNewEntries } from "../session/session.ts";
+import type { RunningSubagent, SessionEntryLike, SessionMessageLike, SubagentResult } from "../types.ts";
+import { findLastSubagentOutput, getEntries, getNewEntries } from "../session/session.ts";
 import { traceSubagentLaunch } from "../launch/trace.ts";
+import { buildHandoffPrompt, shouldContinueContext, writeContinuationHandoff } from "./continuation.ts";
 
 export interface InteractiveWatchRuntime {
 	cleanupNoSessionSessionFile(running: RunningSubagent): void;
+}
+
+function refreshContextUsage(running: RunningSubagent): void {
+	if (!existsSync(running.sessionFile)) return;
+	const entries = getEntries(running.sessionFile) as SessionEntryLike[];
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const message = entries[i]?.message as SessionMessageLike | undefined;
+		if (entries[i]?.type !== "message" || message?.role !== "assistant" || !message.usage) continue;
+		running.contextTokens = message.usage.totalTokens ??
+			(message.usage.input ?? 0) +
+			(message.usage.output ?? 0) +
+			(message.usage.cacheRead ?? 0) +
+			(message.usage.cacheWrite ?? 0);
+		return;
+	}
+}
+
+function maybeRequestContinuation(running: RunningSubagent, surface: string): void {
+	refreshContextUsage(running);
+	const decision = shouldContinueContext({
+		contextTokens: running.contextTokens,
+		contextWindow: running.modelContextWindow,
+		continuationCount: running.continuationCount,
+		alreadyTriggered: running.continuationTriggered,
+	});
+	if (!decision.shouldContinue) return;
+	running.continuationTriggered = true;
+	running.continuationHandoffFile = writeContinuationHandoff({
+		kind: "subagent",
+		name: running.name,
+		agent: running.agent,
+		task: running.task,
+		lastOutput: running.lastAssistantText,
+		contextTokens: running.contextTokens,
+		contextWindow: running.modelContextWindow,
+	});
+	running.activity = `context high; handoff written to ${running.continuationHandoffFile}`;
+	const prompt = buildHandoffPrompt({
+		kind: "subagent",
+		name: running.name,
+		agent: running.agent,
+		task: running.task,
+		lastOutput: `Handoff file: ${running.continuationHandoffFile}`,
+		contextTokens: running.contextTokens,
+		contextWindow: running.modelContextWindow,
+	});
+	sendCommand(surface, `Context is nearly full. Write a concise final handoff, stop work safely, and exit if your lifecycle allows.\n\n${prompt}`);
 }
 
 export async function watchSubagent(
@@ -37,6 +86,7 @@ export async function watchSubagent(
 							.filter((line) => line.trim()).length;
 						running.bytes = stat.size;
 					}
+						maybeRequestContinuation(running, surface);
 				} catch {}
 			},
 		});
@@ -59,6 +109,9 @@ export async function watchSubagent(
 				pollResult.exitCode !== 0
 					? `Sub-agent exited with code ${pollResult.exitCode}`
 					: "Sub-agent exited without output";
+		}
+		if (running.continuationHandoffFile) {
+			summary = `${summary}\n\nAuto-continuation handoff: ${running.continuationHandoffFile}`;
 		}
 
 		const errorMessage =

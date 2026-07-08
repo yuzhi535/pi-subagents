@@ -1,8 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import { consumeSubagentExitSignal } from "../mux.ts";
-import type { RunningSubagent, SessionEntryLike, SubagentResult } from "../types.ts";
+import type { RunningSubagent, SessionEntryLike, SessionMessageLike, SubagentResult } from "../types.ts";
 import { findLastSubagentOutput, getEntries, getEntryCount, getNewEntries } from "../session/session.ts";
 import { getTerminalAssistantSummary, shouldReapStableTerminalSummary } from "../agents/titles.ts";
+import { shouldContinueContext, writeContinuationHandoff } from "./continuation.ts";
 
 export interface BackgroundWatchRuntime {
 	cleanupNoSessionSessionFile(running: RunningSubagent): void;
@@ -20,6 +21,48 @@ function terminateChildProcessGroup(
 	} catch {
 		child.kill(signal);
 	}
+}
+
+function refreshContextUsage(running: RunningSubagent): void {
+	if (!existsSync(running.sessionFile)) return;
+	const entries = getEntries(running.sessionFile) as SessionEntryLike[];
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const message = entries[i]?.message as SessionMessageLike | undefined;
+		if (entries[i]?.type !== "message" || message?.role !== "assistant" || !message.usage) continue;
+		running.contextTokens = message.usage.totalTokens ??
+			(message.usage.input ?? 0) +
+			(message.usage.output ?? 0) +
+			(message.usage.cacheRead ?? 0) +
+			(message.usage.cacheWrite ?? 0);
+		return;
+	}
+}
+
+function maybeRequestContinuation(
+	running: RunningSubagent,
+	terminate: () => void,
+	lastOutput?: string,
+	): void {
+	refreshContextUsage(running);
+	const decision = shouldContinueContext({
+		contextTokens: running.contextTokens,
+		contextWindow: running.modelContextWindow,
+		continuationCount: running.continuationCount,
+		alreadyTriggered: running.continuationTriggered,
+	});
+	if (!decision.shouldContinue) return;
+	running.continuationTriggered = true;
+	running.continuationHandoffFile = writeContinuationHandoff({
+		kind: "subagent",
+		name: running.name,
+		agent: running.agent,
+		task: running.task,
+		lastOutput: lastOutput ?? running.lastAssistantText ?? running.stdoutTail,
+		contextTokens: running.contextTokens,
+		contextWindow: running.modelContextWindow,
+	});
+	running.activity = `context high; handoff written to ${running.continuationHandoffFile}`;
+	terminate();
 }
 
 /**
@@ -69,6 +112,7 @@ export function watchBackgroundSubagent(
 				const stat = statSync(running.sessionFile);
 				running.entries = getEntryCount(running.sessionFile);
 				running.bytes = stat.size;
+				maybeRequestContinuation(running, () => terminateChildProcessGroup(running, "SIGTERM"));
 				if (running.noSession) return;
 				if (!shouldReapStableTerminalSummary(running)) return;
 				const summary = getTerminalAssistantSummary(
@@ -124,6 +168,9 @@ export function watchBackgroundSubagent(
 				summary = stdout;
 			} else if (exitCode !== 0 && stderr) {
 				summary = `Background agent exited with code ${exitCode}\n\n${stderr}`;
+			}
+			if (running.continuationHandoffFile) {
+				summary = `${summary}\n\nAuto-continuation handoff: ${running.continuationHandoffFile}`;
 			}
 			finish({
 				name: running.name,

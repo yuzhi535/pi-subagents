@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { launchBackgroundSubagent as launchBackgroundSubagentWithRuntime, type BackgroundLaunchRuntime } from "../launch/background.ts";
 import { cleanupNoSessionSessionFile } from "../launch/prep.ts";
@@ -12,6 +13,7 @@ import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { getStartedSubagentDetails, getLaunchedSubagentResult as getLaunchedSubagentResultWithRuntime, routeDetachedSubagentCompletion as routeDetachedSubagentCompletionWithDeps, stopRunningSubagent as stopRunningSubagentWithDeps, wireSubagentSteerBack as wireSubagentSteerBackWithDeps, deliverCompletedSubagentResultViaSteer as deliverCompletedSubagentResultViaSteerWithDeps, findTrackedSubagent } from "./running-registry.ts";
 import { waitForSubagentResult as waitForSubagentResultWithRuntime, type WaitRuntime } from "./wait.ts";
 import { asSubagentToolResult, cacheCompletedSubagentResult, completedSubagentResults, moduleAbortController, resetRuntimeStateForTest, runningSubagents, widgetManager, withSubagentBatchStop } from "./state.ts";
+import { buildContinuationTask, getContinuationConfig } from "./continuation.ts";
 
 export { getWatcherSignal, moduleAbortController, runningSubagents, widgetManager } from "./state.ts";
 
@@ -161,11 +163,50 @@ function getBackgroundLaunchRuntime(): BackgroundLaunchRuntime {
 	return { getContextWindow: (modelRef) => widgetManager.resolveModelContextWindow(modelRef) };
 }
 
+function attachContinuationLaunch(
+	running: RunningSubagent,
+	params: SubagentParamsInput,
+	ctx: SubagentLaunchContext,
+	continuationCount = 0,
+	): void {
+	running.continuationParams = params;
+	running.continuationLaunchContext = ctx;
+	running.continuationCount = continuationCount;
+}
+
+async function continueSubagentIfNeeded(
+	running: RunningSubagent,
+	result: SubagentResult,
+	launcher: (params: SubagentParamsInput, ctx: SubagentLaunchContext) => Promise<RunningSubagent>,
+	watcher: (next: RunningSubagent) => Promise<SubagentResult>,
+): Promise<SubagentResult> {
+	if (!running.continuationHandoffFile || !running.continuationParams || !running.continuationLaunchContext) return result;
+	const nextCount = (running.continuationCount ?? 0) + 1;
+	if (nextCount > getContinuationConfig().maxContinuations) return result;
+	const handoff = readFileSync(running.continuationHandoffFile, "utf8");
+	const nextParams: SubagentParamsInput = {
+		...running.continuationParams,
+		task: buildContinuationTask({
+			kind: "subagent",
+			name: running.name,
+			agent: running.agent,
+			task: running.task,
+			lastOutput: handoff,
+			contextTokens: running.contextTokens,
+			contextWindow: running.modelContextWindow,
+		}),
+	};
+	const next = await launcher(nextParams, running.continuationLaunchContext);
+	attachContinuationLaunch(next, running.continuationParams, running.continuationLaunchContext, nextCount);
+	return watcher(next);
+}
+
 export async function launchBackgroundSubagent(
 	params: SubagentParamsInput,
 	ctx: SubagentLaunchContext,
 ): Promise<RunningSubagent> {
 	const running = await launchBackgroundSubagentWithRuntime(params, ctx, getBackgroundLaunchRuntime());
+	attachContinuationLaunch(running, params, ctx);
 	runningSubagents.set(running.id, running);
 	return running;
 }
@@ -178,8 +219,14 @@ export async function watchBackgroundSubagent(
 	running: RunningSubagent,
 	signal?: AbortSignal,
 	timeoutMs?: number,
-) {
-	return watchBackgroundSubagentWithRuntime(running, getBackgroundWatchRuntime(), signal ?? moduleAbortController.signal, timeoutMs);
+): Promise<SubagentResult> {
+	const result = await watchBackgroundSubagentWithRuntime(running, getBackgroundWatchRuntime(), signal ?? moduleAbortController.signal, timeoutMs);
+	return continueSubagentIfNeeded(
+		running,
+		result,
+		(params, ctx) => launchBackgroundSubagent(params, ctx),
+		(next) => watchBackgroundSubagent(next, signal, timeoutMs),
+	);
 }
 
 function getInteractiveLaunchRuntime(): InteractiveLaunchRuntime {
@@ -192,6 +239,7 @@ export async function launchSubagent(
 	options?: { surface?: string },
 ): Promise<RunningSubagent> {
 	const running = await launchInteractiveSubagent(params, ctx, getInteractiveLaunchRuntime(), options);
+	attachContinuationLaunch(running, params, ctx);
 	runningSubagents.set(running.id, running);
 	return running;
 }
@@ -200,8 +248,14 @@ function getInteractiveWatchRuntime(): InteractiveWatchRuntime {
 	return { cleanupNoSessionSessionFile };
 }
 
-export async function watchSubagent(running: RunningSubagent, signal?: AbortSignal) {
-	return watchSubagentWithRuntime(running, getInteractiveWatchRuntime(), signal ?? moduleAbortController.signal);
+export async function watchSubagent(running: RunningSubagent, signal?: AbortSignal): Promise<SubagentResult> {
+	const result = await watchSubagentWithRuntime(running, getInteractiveWatchRuntime(), signal ?? moduleAbortController.signal);
+	return continueSubagentIfNeeded(
+		running,
+		result,
+		(params, ctx) => launchSubagent(params, ctx),
+		(next) => watchSubagent(next, signal),
+	);
 }
 
 function getShutdownRuntime(): ShutdownRuntime {
